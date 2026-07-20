@@ -23,8 +23,33 @@ from google.protobuf.struct_pb2 import Struct
 
 from .v1 import worker_pb2, worker_pb2_grpc
 
-logger = logging.getLogger("runmesh.worker")
 JSON = dict[str, Any]
+logger = logging.getLogger("runmesh.worker")
+
+
+class _JSONFormatter(logging.Formatter):
+    def format(self, record: logging.LogRecord) -> str:
+        payload: JSON = {
+            "timestamp": self.formatTime(record, "%Y-%m-%dT%H:%M:%S%z"),
+            "level": record.levelname,
+            "service": "runmesh-worker-python",
+            "message": record.getMessage(),
+        }
+        for key in ("tenant_id", "workflow_run_id", "task_run_id", "trace_id", "span_id"):
+            value = getattr(record, key, None)
+            if value:
+                payload[key] = value
+        if record.exc_info:
+            payload["exception"] = self.formatException(record.exc_info)
+        return json.dumps(payload, separators=(",", ":"))
+
+
+if not logger.handlers:
+    _handler = logging.StreamHandler()
+    _handler.setFormatter(_JSONFormatter())
+    logger.addHandler(_handler)
+    logger.setLevel(logging.INFO)
+    logger.propagate = False
 Handler = Callable[[JSON, "TaskContext"], Any | Awaitable[Any]]
 T = TypeVar("T")
 
@@ -294,7 +319,14 @@ class Worker:
             )
             raise
         except Exception as exc:
-            logger.exception("handler failed", extra={"task_run_id": task_id})
+            logger.exception(
+                "handler failed",
+                extra={
+                    "workflow_run_id": context.workflow_run_id,
+                    "task_run_id": task_id,
+                    "trace_id": context.trace_id,
+                },
+            )
             await self._report_failure(
                 session, task_id, exc, retryable=True, trace_parent=trace_parent
             )

@@ -17,7 +17,7 @@ React web -> REST control plane -> PostgreSQL <- scheduler
 
 The control plane validates and versions DAGs, creates runs transactionally, handles tenant-scoped reads and mutations, and exposes worker lease/completion callbacks. The scheduler uses `FOR UPDATE SKIP LOCKED` so replicas can claim distinct tasks. The outbox publisher may republish after a crash; task IDs and compare-and-swap transitions make consumers safe under duplicate delivery.
 
-Redis enforces the public API's per-tenant token bucket and is reserved for live UI hints; losing it fails public requests closed in production but does not corrupt or stop execution. MinIO stores oversized input/output/log artifacts. PostgreSQL contains references to those artifacts.
+Redis enforces the public API's per-tenant token bucket and carries tenant-scoped live UI hints after the transactional outbox commit. Those hints only trigger durable API reads; they never replace PostgreSQL or Kafka. Losing Redis fails public requests closed in production, while the dashboard polls and scheduling/execution continue independently. MinIO stores oversized input/output/log artifacts. PostgreSQL contains references to those artifacts.
 
 ## State model
 

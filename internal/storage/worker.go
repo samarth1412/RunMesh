@@ -38,13 +38,16 @@ func (s *Store) LeaseTask(ctx context.Context, taskID, workerID string, lease ti
 	if err = tx.QueryRow(ctx, `SELECT input_artifact_uri FROM workflow_runs WHERE id=$1`, t.WorkflowRunID).Scan(&t.InputArtifactURI); err != nil {
 		return t, err
 	}
-	_, err = tx.Exec(ctx, `INSERT INTO task_attempts(task_run_id,attempt_number,worker_id) VALUES($1,$2,$3)`, t.ID, t.AttemptCount, workerID)
+	_, err = tx.Exec(ctx, `INSERT INTO task_attempts(task_run_id,attempt_number,worker_id,scheduled_at) VALUES($1,$2,$3,$4)`, t.ID, t.AttemptCount, workerID, t.AvailableAt)
 	if err != nil {
 		return t, err
 	}
 	payload, _ := json.Marshal(map[string]any{"workflow_run_id": t.WorkflowRunID, "task_run_id": t.ID, "task_key": t.TaskKey, "worker_id": workerID, "attempt": t.AttemptCount})
 	_, err = tx.Exec(ctx, `INSERT INTO outbox_events(aggregate_type,aggregate_id,event_type,payload,trace_parent) VALUES('task_run',$1,'task.leased',$2,$3)`, t.ID, payload, tracecontext.FromContext(ctx))
 	if err != nil {
+		return t, err
+	}
+	if _, err = tx.Exec(ctx, `UPDATE task_attempts SET executing_at=now() WHERE task_run_id=$1 AND attempt_number=$2 AND executing_at IS NULL`, t.ID, t.AttemptCount); err != nil {
 		return t, err
 	}
 	return t, tx.Commit(ctx)

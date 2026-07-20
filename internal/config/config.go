@@ -11,6 +11,7 @@ import (
 type Config struct {
 	HTTPAddr              string
 	GRPCAddr              string
+	SchedulerMetricsAddr  string
 	DatabaseURL           string
 	KafkaBrokers          []string
 	KafkaTopic            string
@@ -45,6 +46,7 @@ func Load() (Config, error) {
 	c := Config{
 		HTTPAddr:             env("RUNMESH_HTTP_ADDR", ":8080"),
 		GRPCAddr:             env("RUNMESH_GRPC_ADDR", ":7001"),
+		SchedulerMetricsAddr: env("RUNMESH_SCHEDULER_METRICS_ADDR", ":9091"),
 		DatabaseURL:          env("RUNMESH_DATABASE_URL", "postgres://runmesh:runmesh@localhost:5432/runmesh?sslmode=disable"),
 		KafkaBrokers:         strings.Split(env("RUNMESH_KAFKA_BROKERS", "localhost:19092"), ","),
 		KafkaTopic:           env("RUNMESH_KAFKA_TOPIC", "runmesh.tasks"),

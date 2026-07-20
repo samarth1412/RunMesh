@@ -1,0 +1,37 @@
+groups:
+  - name: runmesh-recording
+    interval: 15s
+    rules:
+      - record: kafka_consumer_lag
+        expr: clamp_min(redpanda_kafka_max_offset{redpanda_namespace="kafka"} - on(redpanda_topic,redpanda_partition) group_right(redpanda_group) redpanda_kafka_consumer_group_committed_offset, 0)
+  - name: runmesh-alerts
+    rules:
+      - alert: RunMeshControlPlaneUnavailable
+        expr: up{job="control-plane"} == 0
+        for: 2m
+        labels: {severity: critical}
+        annotations: {summary: "RunMesh control plane is unavailable"}
+      - alert: RunMeshOutboxBacklog
+        expr: outbox_unpublished_events > 100
+        for: 5m
+        labels: {severity: warning}
+        annotations: {summary: "RunMesh transactional outbox is accumulating"}
+      - alert: RunMeshKafkaConsumerLag
+        expr: kafka_consumer_lag{redpanda_group="runmesh-workers"} > 500
+        for: 5m
+        labels: {severity: warning}
+        annotations: {summary: "RunMesh worker Kafka lag is high"}
+      - alert: RunMeshStaleWorker
+        expr: worker_heartbeat_age_seconds > 30
+        for: 2m
+        labels: {severity: warning}
+        annotations: {summary: "A RunMesh worker heartbeat is stale"}
+      - alert: RunMeshRedisFailures
+        expr: increase(redis_operation_failures_total[5m]) > 0 or increase(tenant_rate_limit_rejections_total{reason="redis_unavailable"}[5m]) > 0
+        labels: {severity: warning}
+        annotations: {summary: "Redis-dependent RunMesh capability is degraded"}
+      - alert: RunMeshWorkflowFailureRatio
+        expr: sum(increase(workflow_runs_total{status="FAILED"}[15m])) / clamp_min(sum(increase(workflow_runs_total[15m])), 1) > 0.1
+        for: 10m
+        labels: {severity: warning}
+        annotations: {summary: "Workflow failure ratio exceeds 10 percent"}
