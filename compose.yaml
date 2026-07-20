@@ -45,9 +45,10 @@ services:
 
   keycloak:
     image: quay.io/keycloak/keycloak:26.1
-    command: ["start-dev", "--http-port=8080"]
+    command: ["start-dev", "--http-port=8080", "--import-realm"]
     environment: {KC_BOOTSTRAP_ADMIN_USERNAME: admin, KC_BOOTSTRAP_ADMIN_PASSWORD: runmesh}
     ports: ["8180:8080"]
+    volumes: ["./deploy/docker/keycloak:/opt/keycloak/data/import:ro"]
 
   control-plane:
     build: {context: ., args: {SERVICE: control-plane}}
@@ -57,6 +58,7 @@ services:
       migrate: {condition: service_completed_successfully}
       redpanda: {condition: service_healthy}
       redis: {condition: service_healthy}
+      keycloak: {condition: service_started}
     healthcheck: {test: ["CMD", "/app/service", "--healthcheck"], interval: 10s, timeout: 3s, retries: 10}
     restart: unless-stopped
 
@@ -73,7 +75,7 @@ services:
     environment:
       RUNMESH_ENDPOINT: control-plane:7001
       RUNMESH_HTTP_ENDPOINT: control-plane:8080
-      RUNMESH_INTERNAL_TOKEN: local-development-token
+      RUNMESH_INTERNAL_TOKEN: rm_00000000-0000-0000-0000-000000000002_local-development-worker-key
       RUNMESH_KAFKA_BROKERS: redpanda:9092
     depends_on: {control-plane: {condition: service_started}, redpanda: {condition: service_healthy}}
     restart: unless-stopped
@@ -82,13 +84,16 @@ services:
     build: {context: ., args: {SERVICE: worker-go}}
     environment:
       RUNMESH_ENDPOINT: control-plane:7001
-      RUNMESH_INTERNAL_TOKEN: local-development-token
+      RUNMESH_INTERNAL_TOKEN: rm_00000000-0000-0000-0000-000000000002_local-development-worker-key
       RUNMESH_KAFKA_BROKERS: redpanda:9092
     depends_on: {control-plane: {condition: service_started}, redpanda: {condition: service_healthy}}
     restart: unless-stopped
 
   web:
-    build: {context: ., dockerfile: web/Dockerfile}
+    build:
+      context: .
+      dockerfile: web/Dockerfile
+      args: {VITE_DEV_AUTH: "false", VITE_OIDC_AUTHORITY: "http://localhost:8180/realms/runmesh", VITE_OIDC_CLIENT_ID: "runmesh-web"}
     ports: ["3000:3000"]
     depends_on: [control-plane]
     restart: unless-stopped

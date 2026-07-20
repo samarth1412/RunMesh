@@ -211,11 +211,11 @@ func (s *Store) FailTask(ctx context.Context, taskID, workerID string, f Failure
 	return t, tx.Commit(ctx)
 }
 
-func (s *Store) WorkerHeartbeat(ctx context.Context, workerID string, handlers []string, active int, metadata json.RawMessage) error {
+func (s *Store) WorkerHeartbeat(ctx context.Context, tenantID, workerID string, handlers []string, active int, metadata json.RawMessage) error {
 	if len(metadata) == 0 {
 		metadata = []byte(`{}`)
 	}
-	_, err := s.Pool.Exec(ctx, `INSERT INTO worker_heartbeats(worker_id,handlers,active_tasks,metadata,last_seen_at) VALUES($1,$2,$3,$4,now()) ON CONFLICT(worker_id) DO UPDATE SET handlers=excluded.handlers,active_tasks=excluded.active_tasks,metadata=excluded.metadata,last_seen_at=now()`, workerID, handlers, active, metadata)
+	_, err := s.Pool.Exec(ctx, `INSERT INTO worker_heartbeats(tenant_id,worker_id,handlers,active_tasks,metadata,last_seen_at) VALUES($1,$2,$3,$4,$5,now()) ON CONFLICT(tenant_id,worker_id) DO UPDATE SET handlers=excluded.handlers,active_tasks=excluded.active_tasks,metadata=excluded.metadata,last_seen_at=now()`, tenantID, workerID, handlers, active, metadata)
 	return err
 }
 
@@ -227,8 +227,8 @@ type WorkerInfo struct {
 	LastSeenAt  time.Time       `json:"last_seen_at"`
 }
 
-func (s *Store) ListWorkers(ctx context.Context) ([]WorkerInfo, error) {
-	rows, err := s.Pool.Query(ctx, `SELECT worker_id,handlers,active_tasks,metadata,last_seen_at FROM worker_heartbeats ORDER BY last_seen_at DESC`)
+func (s *Store) ListWorkers(ctx context.Context, tenantID string) ([]WorkerInfo, error) {
+	rows, err := s.Pool.Query(ctx, `SELECT worker_id,handlers,active_tasks,metadata,last_seen_at FROM worker_heartbeats WHERE tenant_id=$1 ORDER BY last_seen_at DESC`, tenantID)
 	if err != nil {
 		return nil, err
 	}
@@ -242,6 +242,18 @@ func (s *Store) ListWorkers(ctx context.Context) ([]WorkerInfo, error) {
 		out = append(out, w)
 	}
 	return out, rows.Err()
+}
+
+func (s *Store) TaskBelongsToTenant(ctx context.Context, taskID, tenantID string) error {
+	var exists bool
+	err := s.Pool.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM task_runs t JOIN workflow_runs r ON r.id=t.workflow_run_id WHERE t.id=$1 AND r.tenant_id=$2)`, taskID, tenantID).Scan(&exists)
+	if err != nil {
+		return err
+	}
+	if !exists {
+		return ErrNotFound
+	}
+	return nil
 }
 
 func (s *Store) DeadLetter(ctx context.Context, tenantID string) ([]workflow.TaskRun, error) {

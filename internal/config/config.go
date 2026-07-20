@@ -22,20 +22,30 @@ type Config struct {
 	DevTenantID       string
 	DevUserID         string
 	DevRole           string
+	OIDCIssuer        string
+	OIDCAudience      string
+	OIDCJWKSURL       string
+	OIDCTenantClaim   string
+	APIKeyPepper      string
 }
 
 func Load() (Config, error) {
 	c := Config{
-		HTTPAddr:      env("RUNMESH_HTTP_ADDR", ":8080"),
-		GRPCAddr:      env("RUNMESH_GRPC_ADDR", ":7001"),
-		DatabaseURL:   env("RUNMESH_DATABASE_URL", "postgres://runmesh:runmesh@localhost:5432/runmesh?sslmode=disable"),
-		KafkaBrokers:  strings.Split(env("RUNMESH_KAFKA_BROKERS", "localhost:19092"), ","),
-		KafkaTopic:    env("RUNMESH_KAFKA_TOPIC", "runmesh.tasks"),
-		InternalToken: env("RUNMESH_INTERNAL_TOKEN", ""),
-		DevAuth:       envBool("RUNMESH_DEV_AUTH", false),
-		DevTenantID:   env("RUNMESH_DEV_TENANT_ID", "00000000-0000-0000-0000-000000000001"),
-		DevUserID:     env("RUNMESH_DEV_USER_ID", "00000000-0000-0000-0000-000000000001"),
-		DevRole:       env("RUNMESH_DEV_ROLE", "admin"),
+		HTTPAddr:        env("RUNMESH_HTTP_ADDR", ":8080"),
+		GRPCAddr:        env("RUNMESH_GRPC_ADDR", ":7001"),
+		DatabaseURL:     env("RUNMESH_DATABASE_URL", "postgres://runmesh:runmesh@localhost:5432/runmesh?sslmode=disable"),
+		KafkaBrokers:    strings.Split(env("RUNMESH_KAFKA_BROKERS", "localhost:19092"), ","),
+		KafkaTopic:      env("RUNMESH_KAFKA_TOPIC", "runmesh.tasks"),
+		InternalToken:   env("RUNMESH_INTERNAL_TOKEN", ""),
+		DevAuth:         envBool("RUNMESH_DEV_AUTH", false),
+		DevTenantID:     env("RUNMESH_DEV_TENANT_ID", "00000000-0000-0000-0000-000000000001"),
+		DevUserID:       env("RUNMESH_DEV_USER_ID", "00000000-0000-0000-0000-000000000001"),
+		DevRole:         env("RUNMESH_DEV_ROLE", "admin"),
+		OIDCIssuer:      env("RUNMESH_OIDC_ISSUER", ""),
+		OIDCAudience:    env("RUNMESH_OIDC_AUDIENCE", "runmesh-web"),
+		OIDCJWKSURL:     env("RUNMESH_OIDC_JWKS_URL", ""),
+		OIDCTenantClaim: env("RUNMESH_OIDC_TENANT_CLAIM", "runmesh_tenant_id"),
+		APIKeyPepper:    env("RUNMESH_API_KEY_PEPPER", ""),
 	}
 	var err error
 	if c.LeaseDuration, err = envDuration("RUNMESH_LEASE_DURATION", 30*time.Second); err != nil {
@@ -48,7 +58,13 @@ func Load() (Config, error) {
 		return Config{}, err
 	}
 	if c.InternalToken == "" && !c.DevAuth {
-		return Config{}, fmt.Errorf("RUNMESH_INTERNAL_TOKEN is required outside development")
+		return Config{}, fmt.Errorf("RUNMESH_INTERNAL_TOKEN is required outside development for administrative tooling")
+	}
+	if !c.DevAuth && (c.OIDCIssuer == "" || c.OIDCJWKSURL == "" || c.OIDCAudience == "") {
+		return Config{}, fmt.Errorf("RUNMESH_OIDC_ISSUER, RUNMESH_OIDC_JWKS_URL, and RUNMESH_OIDC_AUDIENCE are required outside development")
+	}
+	if !c.DevAuth && c.APIKeyPepper == "" {
+		return Config{}, fmt.Errorf("RUNMESH_API_KEY_PEPPER is required outside development")
 	}
 	return c, nil
 }

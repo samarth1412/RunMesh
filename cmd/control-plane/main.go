@@ -53,15 +53,18 @@ func main() {
 	}
 	defer store.Close()
 	prometheus.MustRegister(telemetry.NewDatabaseCollector(store))
-	authn := auth.Middleware(cfg.DevAuth, auth.Principal{TenantID: cfg.DevTenantID, UserID: cfg.DevUserID, Role: cfg.DevRole})
-	server := api.New(store, cfg.LeaseDuration, cfg.InternalToken, authn)
+	authenticator := auth.New(store.Pool, auth.Config{
+		Dev: cfg.DevAuth, DevPrincipal: auth.Principal{TenantID: cfg.DevTenantID, UserID: cfg.DevUserID, Role: cfg.DevRole}, DevWorkerToken: cfg.InternalToken,
+		Issuer: cfg.OIDCIssuer, Audience: cfg.OIDCAudience, JWKSURL: cfg.OIDCJWKSURL, TenantClaim: cfg.OIDCTenantClaim, APIKeyPepper: cfg.APIKeyPepper,
+	})
+	server := api.New(store, cfg.LeaseDuration, authenticator.Middleware, authenticator.WorkerMiddleware, cfg.APIKeyPepper)
 	grpcListener, err := net.Listen("tcp", cfg.GRPCAddr)
 	if err != nil {
 		slog.Error("gRPC listener", "error", err)
 		os.Exit(1)
 	}
 	grpcServer := grpc.NewServer(grpc.StatsHandler(otelgrpc.NewServerHandler()))
-	runmeshv1.RegisterWorkerServiceServer(grpcServer, &workerrpc.WorkerServer{Store: store, LeaseDuration: cfg.LeaseDuration, Token: cfg.InternalToken})
+	runmeshv1.RegisterWorkerServiceServer(grpcServer, &workerrpc.WorkerServer{Store: store, LeaseDuration: cfg.LeaseDuration, Authenticator: authenticator})
 	go func() {
 		if serveErr := grpcServer.Serve(grpcListener); serveErr != nil {
 			slog.Error("gRPC server", "error", serveErr)

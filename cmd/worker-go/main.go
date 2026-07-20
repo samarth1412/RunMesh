@@ -127,7 +127,9 @@ func report(ctx context.Context, client *runmesh.Client) {
 	ticker := time.NewTicker(10 * time.Second)
 	defer ticker.Stop()
 	for {
-		_ = client.Report(ctx, []string{"examples.greet", "examples.upper"}, 0)
+		if err := client.Report(ctx, []string{"examples.greet", "examples.upper"}, 0); err != nil {
+			slog.Warn("worker heartbeat failed", "error", err)
+		}
 		select {
 		case <-ctx.Done():
 			return

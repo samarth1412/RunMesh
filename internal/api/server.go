@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
@@ -25,43 +26,50 @@ const maxBodyBytes = 1 << 20
 type Server struct {
 	Store         *storage.Store
 	LeaseDuration time.Duration
-	InternalToken string
 	Auth          func(http.Handler) http.Handler
+	WorkerAuth    func(http.Handler) http.Handler
+	APIKeyPepper  string
 	Requests      *prometheus.HistogramVec
 }
 
-func New(store *storage.Store, lease time.Duration, internalToken string, authMiddleware func(http.Handler) http.Handler) *Server {
+func New(store *storage.Store, lease time.Duration, authMiddleware, workerAuth func(http.Handler) http.Handler, apiKeyPepper string) *Server {
 	req := prometheus.NewHistogramVec(prometheus.HistogramOpts{Name: "api_request_duration_seconds", Help: "Public API request latency", Buckets: prometheus.DefBuckets}, []string{"method", "route", "status"})
 	prometheus.MustRegister(req)
-	return &Server{Store: store, LeaseDuration: lease, InternalToken: internalToken, Auth: authMiddleware, Requests: req}
+	return &Server{Store: store, LeaseDuration: lease, Auth: authMiddleware, WorkerAuth: workerAuth, APIKeyPepper: apiKeyPepper, Requests: req}
 }
 
 func (s *Server) Handler() http.Handler {
 	root := http.NewServeMux()
 	public := http.NewServeMux()
-	public.HandleFunc("POST /v1/workflows", auth.RequireRole("developer", s.createWorkflow))
-	public.HandleFunc("GET /v1/workflows", auth.RequireRole("viewer", s.listWorkflows))
-	public.HandleFunc("GET /v1/workflows/{id}", auth.RequireRole("viewer", s.getWorkflow))
-	public.HandleFunc("POST /v1/workflows/{id}/versions", auth.RequireRole("developer", s.createVersion))
-	public.HandleFunc("POST /v1/workflows/{id}/runs", auth.RequireRole("operator", s.createRun))
-	public.HandleFunc("GET /v1/runs", auth.RequireRole("viewer", s.listRuns))
-	public.HandleFunc("GET /v1/runs/{id}", auth.RequireRole("viewer", s.getRun))
-	public.HandleFunc("POST /v1/runs/{id}/cancel", auth.RequireRole("operator", s.cancelRun))
-	public.HandleFunc("POST /v1/runs/{id}/retry", auth.RequireRole("operator", s.retryRun))
-	public.HandleFunc("GET /v1/runs/{id}/events", auth.RequireRole("viewer", s.events))
-	public.HandleFunc("GET /v1/workers", auth.RequireRole("viewer", s.workers))
-	public.HandleFunc("GET /v1/dead-letter", auth.RequireRole("operator", s.deadLetter))
-	public.HandleFunc("POST /v1/dead-letter/{id}/replay", auth.RequireRole("operator", s.replay))
-	public.HandleFunc("POST /v1/schedules", auth.RequireRole("developer", s.createSchedule))
-	public.HandleFunc("PATCH /v1/schedules/{id}", auth.RequireRole("developer", s.patchSchedule))
-	public.HandleFunc("DELETE /v1/schedules/{id}", auth.RequireRole("developer", s.deleteSchedule))
+	public.HandleFunc("POST /v1/workflows", auth.Require("developer", "workflows:write", s.createWorkflow))
+	public.HandleFunc("GET /v1/workflows", auth.Require("viewer", "workflows:read", s.listWorkflows))
+	public.HandleFunc("GET /v1/workflows/{id}", auth.Require("viewer", "workflows:read", s.getWorkflow))
+	public.HandleFunc("POST /v1/workflows/{id}/versions", auth.Require("developer", "workflows:write", s.createVersion))
+	public.HandleFunc("POST /v1/workflows/{id}/runs", auth.Require("operator", "runs:execute", s.createRun))
+	public.HandleFunc("GET /v1/runs", auth.Require("viewer", "runs:read", s.listRuns))
+	public.HandleFunc("GET /v1/runs/{id}", auth.Require("viewer", "runs:read", s.getRun))
+	public.HandleFunc("POST /v1/runs/{id}/cancel", auth.Require("operator", "runs:execute", s.cancelRun))
+	public.HandleFunc("POST /v1/runs/{id}/retry", auth.Require("operator", "runs:execute", s.retryRun))
+	public.HandleFunc("GET /v1/runs/{id}/events", auth.Require("viewer", "runs:read", s.events))
+	public.HandleFunc("GET /v1/workers", auth.Require("viewer", "workers:read", s.workers))
+	public.HandleFunc("GET /v1/dead-letter", auth.Require("operator", "dead-letter:read", s.deadLetter))
+	public.HandleFunc("POST /v1/dead-letter/{id}/replay", auth.Require("operator", "dead-letter:replay", s.replay))
+	public.HandleFunc("POST /v1/schedules", auth.Require("developer", "schedules:write", s.createSchedule))
+	public.HandleFunc("PATCH /v1/schedules/{id}", auth.Require("developer", "schedules:write", s.patchSchedule))
+	public.HandleFunc("DELETE /v1/schedules/{id}", auth.Require("developer", "schedules:write", s.deleteSchedule))
+	public.HandleFunc("GET /v1/api-keys", auth.RequireHumanRole("admin", s.listAPIKeys))
+	public.HandleFunc("POST /v1/api-keys", auth.RequireHumanRole("admin", s.createAPIKey))
+	public.HandleFunc("POST /v1/api-keys/{id}/rotate", auth.RequireHumanRole("admin", s.rotateAPIKey))
+	public.HandleFunc("DELETE /v1/api-keys/{id}", auth.RequireHumanRole("admin", s.revokeAPIKey))
 	root.Handle("/v1/", s.Auth(s.instrument(public)))
-	root.HandleFunc("POST /internal/v1/tasks/{id}/lease", auth.Internal(s.InternalToken, s.lease))
-	root.HandleFunc("POST /internal/v1/tasks/{id}/start", auth.Internal(s.InternalToken, s.start))
-	root.HandleFunc("POST /internal/v1/tasks/{id}/heartbeat", auth.Internal(s.InternalToken, s.heartbeat))
-	root.HandleFunc("POST /internal/v1/tasks/{id}/complete", auth.Internal(s.InternalToken, s.complete))
-	root.HandleFunc("POST /internal/v1/tasks/{id}/fail", auth.Internal(s.InternalToken, s.fail))
-	root.HandleFunc("POST /internal/v1/workers/{id}/heartbeat", auth.Internal(s.InternalToken, s.workerHeartbeat))
+	internal := http.NewServeMux()
+	internal.HandleFunc("POST /internal/v1/tasks/{id}/lease", s.lease)
+	internal.HandleFunc("POST /internal/v1/tasks/{id}/start", s.start)
+	internal.HandleFunc("POST /internal/v1/tasks/{id}/heartbeat", s.heartbeat)
+	internal.HandleFunc("POST /internal/v1/tasks/{id}/complete", s.complete)
+	internal.HandleFunc("POST /internal/v1/tasks/{id}/fail", s.fail)
+	internal.HandleFunc("POST /internal/v1/workers/{id}/heartbeat", s.workerHeartbeat)
+	root.Handle("/internal/v1/", s.WorkerAuth(internal))
 	root.HandleFunc("GET /health/live", func(w http.ResponseWriter, r *http.Request) { writeJSON(w, 200, map[string]string{"status": "ok"}) })
 	root.HandleFunc("GET /health/ready", s.ready)
 	root.Handle("GET /metrics", promhttp.Handler())
@@ -207,7 +215,7 @@ func (s *Server) events(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, 200, map[string]any{"items": events})
 }
 func (s *Server) workers(w http.ResponseWriter, r *http.Request) {
-	items, err := s.Store.ListWorkers(r.Context())
+	items, err := s.Store.ListWorkers(r.Context(), auth.PrincipalFrom(r.Context()).TenantID)
 	if handleErr(w, err) {
 		return
 	}
@@ -234,6 +242,89 @@ func (s *Server) replay(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, 202, map[string]string{"status": "READY"})
 }
 
+var allowedAPIKeyScopes = map[string]bool{
+	"workflows:read": true, "workflows:write": true,
+	"runs:read": true, "runs:execute": true,
+	"schedules:write": true, "workers:read": true, "workers:execute": true,
+	"dead-letter:read": true, "dead-letter:replay": true,
+	"artifacts:read": true, "artifacts:write": true,
+}
+
+func (s *Server) listAPIKeys(w http.ResponseWriter, r *http.Request) {
+	keys, err := s.Store.ListAPIKeys(r.Context(), auth.PrincipalFrom(r.Context()).TenantID)
+	if handleErr(w, err) {
+		return
+	}
+	if keys == nil {
+		keys = []storage.APIKey{}
+	}
+	writeJSON(w, 200, map[string]any{"items": keys})
+}
+
+func (s *Server) createAPIKey(w http.ResponseWriter, r *http.Request) {
+	var request struct {
+		Name      string     `json:"name"`
+		Scopes    []string   `json:"scopes"`
+		ExpiresAt *time.Time `json:"expires_at"`
+	}
+	if !decode(w, r, &request) {
+		return
+	}
+	request.Name = strings.TrimSpace(request.Name)
+	if request.Name == "" || len(request.Name) > 100 || len(request.Scopes) == 0 {
+		writeError(w, 422, "name and at least one scope are required")
+		return
+	}
+	seen := map[string]bool{}
+	for _, scope := range request.Scopes {
+		if !allowedAPIKeyScopes[scope] || seen[scope] {
+			writeError(w, 422, "invalid or duplicate API key scope")
+			return
+		}
+		seen[scope] = true
+	}
+	if request.ExpiresAt != nil && !request.ExpiresAt.After(time.Now()) {
+		writeError(w, 422, "expires_at must be in the future")
+		return
+	}
+	id, token, hash, err := auth.GenerateAPIKey(s.APIKeyPepper)
+	if handleErr(w, err) {
+		return
+	}
+	principal := auth.PrincipalFrom(r.Context())
+	key, err := s.Store.CreateAPIKey(r.Context(), id, principal.TenantID, principal.UserID, request.Name, request.Scopes, request.ExpiresAt, hash)
+	if handleErr(w, err) {
+		return
+	}
+	writeJSON(w, 201, map[string]any{"api_key": key, "token": token})
+}
+
+func (s *Server) rotateAPIKey(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	if _, err := uuid.Parse(id); err != nil {
+		writeError(w, 400, "invalid API key id")
+		return
+	}
+	token, hash, err := auth.GenerateAPIKeyForID(id, s.APIKeyPepper)
+	if handleErr(w, err) {
+		return
+	}
+	principal := auth.PrincipalFrom(r.Context())
+	key, err := s.Store.RotateAPIKey(r.Context(), id, principal.TenantID, principal.UserID, hash)
+	if handleErr(w, err) {
+		return
+	}
+	writeJSON(w, 200, map[string]any{"api_key": key, "token": token})
+}
+
+func (s *Server) revokeAPIKey(w http.ResponseWriter, r *http.Request) {
+	principal := auth.PrincipalFrom(r.Context())
+	if handleErr(w, s.Store.RevokeAPIKey(r.Context(), r.PathValue("id"), principal.TenantID, principal.UserID)) {
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
 type workerRequest struct {
 	WorkerID string `json:"worker_id"`
 }
@@ -241,6 +332,9 @@ type workerRequest struct {
 func (s *Server) lease(w http.ResponseWriter, r *http.Request) {
 	var req workerRequest
 	if !decode(w, r, &req) || req.WorkerID == "" {
+		return
+	}
+	if !s.authorizeTask(w, r) {
 		return
 	}
 	t, err := s.Store.LeaseTask(r.Context(), r.PathValue("id"), req.WorkerID, s.LeaseDuration)
@@ -254,6 +348,9 @@ func (s *Server) start(w http.ResponseWriter, r *http.Request) {
 	if !decode(w, r, &req) {
 		return
 	}
+	if !s.authorizeTask(w, r) {
+		return
+	}
 	t, err := s.Store.StartTask(r.Context(), r.PathValue("id"), req.WorkerID)
 	if handleErr(w, err) {
 		return
@@ -263,6 +360,9 @@ func (s *Server) start(w http.ResponseWriter, r *http.Request) {
 func (s *Server) heartbeat(w http.ResponseWriter, r *http.Request) {
 	var req workerRequest
 	if !decode(w, r, &req) {
+		return
+	}
+	if !s.authorizeTask(w, r) {
 		return
 	}
 	expires, cancelled, err := s.Store.HeartbeatTask(r.Context(), r.PathValue("id"), req.WorkerID, s.LeaseDuration)
@@ -280,6 +380,9 @@ func (s *Server) complete(w http.ResponseWriter, r *http.Request) {
 	if !decode(w, r, &req) {
 		return
 	}
+	if !s.authorizeTask(w, r) {
+		return
+	}
 	t, err := s.Store.CompleteTask(r.Context(), r.PathValue("id"), req.WorkerID, req.Output, req.OutputArtifactURI)
 	if handleErr(w, err) {
 		return
@@ -292,6 +395,9 @@ func (s *Server) fail(w http.ResponseWriter, r *http.Request) {
 		storage.Failure
 	}
 	if !decode(w, r, &req) {
+		return
+	}
+	if !s.authorizeTask(w, r) {
 		return
 	}
 	t, err := s.Store.FailTask(r.Context(), r.PathValue("id"), req.WorkerID, req.Failure)
@@ -309,10 +415,18 @@ func (s *Server) workerHeartbeat(w http.ResponseWriter, r *http.Request) {
 	if !decode(w, r, &req) {
 		return
 	}
-	if handleErr(w, s.Store.WorkerHeartbeat(r.Context(), r.PathValue("id"), req.Handlers, req.ActiveTasks, req.Metadata)) {
+	if handleErr(w, s.Store.WorkerHeartbeat(r.Context(), auth.PrincipalFrom(r.Context()).TenantID, r.PathValue("id"), req.Handlers, req.ActiveTasks, req.Metadata)) {
 		return
 	}
 	w.WriteHeader(204)
+}
+
+func (s *Server) authorizeTask(w http.ResponseWriter, r *http.Request) bool {
+	err := s.Store.TaskBelongsToTenant(r.Context(), r.PathValue("id"), auth.PrincipalFrom(r.Context()).TenantID)
+	if handleErr(w, err) {
+		return false
+	}
+	return true
 }
 
 func (s *Server) createSchedule(w http.ResponseWriter, r *http.Request) {

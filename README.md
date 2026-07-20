@@ -16,16 +16,24 @@ Then open:
 - Grafana: http://localhost:3001 (`admin` / `runmesh`)
 - Redpanda Console: http://localhost:8081
 
-The local stack enables a development identity. Requests are scoped to the seeded tenant; production configuration rejects development auth and expects a trusted OIDC proxy/JWT verifier.
+Requests are scoped to the authenticated tenant. Production configuration rejects development auth and requires a verified OIDC token or scoped API key.
+
+The dashboard signs in through the bundled Keycloak realm. Use `admin` / `runmesh`. The control plane verifies the resulting JWT and resolves tenant membership and role from PostgreSQL.
 
 ## Quick start
 
 ```bash
+TOKEN="$(curl -sS http://localhost:8180/realms/runmesh/protocol/openid-connect/token \
+  -d grant_type=password -d client_id=runmesh-web -d username=admin -d password=runmesh \
+  | python3 -c 'import json,sys; print(json.load(sys.stdin)["access_token"])')"
+
 curl -sS http://localhost:8080/v1/workflows \
+  -H "Authorization: Bearer $TOKEN" \
   -H 'Content-Type: application/json' \
   -d '{"name":"hello","tasks":{"greet":{"handler":"examples.greet"}}}'
 
 curl -sS http://localhost:8080/v1/workflows/<workflow-id>/runs \
+  -H "Authorization: Bearer $TOKEN" \
   -H 'Content-Type: application/json' \
   -H 'Idempotency-Key: first-run' \
   -d '{"input":{"name":"Ada"}}'

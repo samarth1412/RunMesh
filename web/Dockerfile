@@ -3,6 +3,10 @@ WORKDIR /app
 COPY web/package*.json ./
 RUN npm install
 COPY web .
+ARG VITE_DEV_AUTH=true
+ARG VITE_OIDC_AUTHORITY=http://localhost:8180/realms/runmesh
+ARG VITE_OIDC_CLIENT_ID=runmesh-web
+ENV VITE_DEV_AUTH=$VITE_DEV_AUTH VITE_OIDC_AUTHORITY=$VITE_OIDC_AUTHORITY VITE_OIDC_CLIENT_ID=$VITE_OIDC_CLIENT_ID
 RUN npm run build
 
 FROM nginx:1.27-alpine
