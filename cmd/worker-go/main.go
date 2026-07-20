@@ -37,7 +37,7 @@ func main() {
 	}
 	defer shutdownTelemetry(context.Background())
 	brokers := strings.Split(env("RUNMESH_KAFKA_BROKERS", "localhost:19092"), ",")
-	workerID := env("RUNMESH_WORKER_ID", "go-worker-1")
+	workerID := env("RUNMESH_WORKER_ID", defaultWorkerID())
 	client := runmesh.NewClient(env("RUNMESH_ENDPOINT", "localhost:7001"), env("RUNMESH_INTERNAL_TOKEN", "local-development-token"), workerID)
 	defer client.Close()
 	reader := kafka.NewReader(kafka.ReaderConfig{Brokers: brokers, Topic: env("RUNMESH_KAFKA_TOPIC", "runmesh.tasks"), GroupID: "runmesh-workers", MinBytes: 1, MaxBytes: 10e6})
@@ -167,4 +167,12 @@ func env(key, fallback string) string {
 		return v
 	}
 	return fallback
+}
+
+func defaultWorkerID() string {
+	hostname, err := os.Hostname()
+	if err != nil || hostname == "" {
+		return "go-worker"
+	}
+	return "go-worker-" + hostname
 }

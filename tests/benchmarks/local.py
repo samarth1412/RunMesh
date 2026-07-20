@@ -95,7 +95,7 @@ def prepare_tasks(api: str, token: str, tasks: int, prefix: str) -> dict:
     runs = []
     started = time.perf_counter()
     for index in range(tasks // per_run):
-        status, payload, _ = post_with_retry(api, token, f"/v1/workflows/{workflow_id}/runs", {"input": {"delay_ms": 20}}, f"{prefix}-{index:04d}")
+        status, payload, _ = post_with_retry(api, token, f"/v1/workflows/{workflow_id}/runs", {"input": {"delay_ms": 500}}, f"{prefix}-{index:04d}")
         if status != 201:
             raise RuntimeError(f"create load run {index} failed: {status} {payload}")
         runs.append(payload["id"])
