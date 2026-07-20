@@ -28,6 +28,8 @@ docker compose exec -T postgres psql -U runmesh -d runmesh -Atc \
 docker compose exec -T postgres psql -U runmesh -d runmesh -c \
   "UPDATE task_runs SET status='CANCELLED' WHERE workflow_run_id IN (SELECT id FROM workflow_runs WHERE idempotency_key LIKE '$active_prefix-%'); UPDATE workflow_runs SET status='CANCELLED',completed_at=now() WHERE idempotency_key LIKE '$active_prefix-%';" >/dev/null
 
+# Begin at the current topic end so a repeat run measures only its own work.
+docker compose exec -T redpanda rpk group seek runmesh-workers --to end --topics runmesh.tasks >/dev/null
 python3 tests/benchmarks/local.py prepare --tasks 10000 --prefix "$crash_prefix" > "$result_dir/worker-crash-setup.json"
 dispatch_start=$(date +%s)
 docker compose up -d scheduler
@@ -39,10 +41,18 @@ elapsed = max(1, int(sys.argv[2]) - int(sys.argv[1]))
 print(json.dumps({"scenario":"scheduler_dispatch","tasks":10000,"elapsed_seconds":round(elapsed,3),"dispatches_per_second":round(10000/elapsed,3)}, indent=2))
 PY
 
+# Make the first dispatch long enough to guarantee an in-flight lease when the
+# entire worker pool is terminated; the other 9,999 tasks remain short.
+docker compose exec -T postgres psql -U runmesh -d runmesh -c \
+  "UPDATE task_runs SET input='{\"delay_ms\":5000}'::jsonb WHERE id=(SELECT tr.id FROM task_runs tr JOIN workflow_runs wr ON wr.id=tr.workflow_run_id JOIN outbox_events o ON o.aggregate_id=tr.id AND o.event_type='task.dispatch' WHERE wr.idempotency_key LIKE '$crash_prefix-%' ORDER BY o.created_at,o.id LIMIT 1);" >/dev/null
 docker compose up -d --build --scale worker-go=20 worker-go
-while (( $(docker compose exec -T postgres psql -U runmesh -d runmesh -Atc "SELECT count(*) FROM task_runs tr JOIN workflow_runs wr ON wr.id=tr.workflow_run_id WHERE wr.idempotency_key LIKE '$crash_prefix-%' AND tr.status='RUNNING'") < 10 )); do sleep 0.1; done
+while [[ $(docker compose exec -T postgres psql -U runmesh -d runmesh -Atc "SELECT count(*) FROM task_runs tr JOIN workflow_runs wr ON wr.id=tr.workflow_run_id WHERE wr.idempotency_key LIKE '$crash_prefix-%' AND tr.status='RUNNING'") == 0 ]]; do sleep 0.1; done
 worker_ids=( $(docker compose ps -q worker-go) )
 docker kill "${worker_ids[@]}"
+python3 - "${#worker_ids[@]}" "$crash_prefix" > "$result_dir/worker-termination.json" <<'PY'
+import datetime, json, sys
+print(json.dumps({"terminated_workers":int(sys.argv[1]),"idempotency_prefix":sys.argv[2],"terminated_at":datetime.datetime.now(datetime.timezone.utc).isoformat()}, indent=2))
+PY
 docker compose up -d --scale worker-go=20 worker-go
 recovery_start=$(date +%s)
 while [[ $(docker compose exec -T postgres psql -U runmesh -d runmesh -Atc "SELECT count(*) FROM workflow_runs WHERE idempotency_key LIKE '$crash_prefix-%' AND status NOT IN ('SUCCEEDED','FAILED','CANCELLED')") != 0 ]]; do sleep 1; done
