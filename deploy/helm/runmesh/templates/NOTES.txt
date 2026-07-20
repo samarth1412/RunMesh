@@ -1,0 +1,11 @@
+RunMesh {{ .Chart.AppVersion }} is installed.
+
+Control-plane service: runmesh-control-plane:8080 (HTTP), :7001 (gRPC)
+Scheduler metrics: runmesh-scheduler:9091
+Web service: runmesh-web:80
+
+Kafka is intentionally external and configured as {{ .Values.config.kafkaBrokers }}.
+Secrets are read from {{ include "runmesh.secretName" . }}.
+{{- if .Values.ingress.enabled }}
+Dashboard: https://{{ .Values.ingress.host }}/
+{{- end }}

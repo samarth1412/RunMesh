@@ -1,0 +1,47 @@
+{
+  "$schema": "https://json-schema.org/draft-07/schema#",
+  "type": "object",
+  "required": ["images", "config", "secret", "workerPools"],
+  "properties": {
+    "images": {
+      "type": "object",
+      "required": ["controlPlane", "scheduler", "web", "workerGo", "workerPython"]
+    },
+    "config": {
+      "type": "object",
+      "required": ["kafkaBrokers", "kafkaTopic", "oidcAudience", "artifactRegion", "artifactBucket"],
+      "properties": {
+        "devAuth": {"type": "boolean"},
+        "webApiURL": {"type": "string"},
+        "kafkaBrokers": {"type": "string", "minLength": 1},
+        "kafkaTopic": {"type": "string", "minLength": 1},
+        "rateLimitRate": {"type": "integer", "minimum": 1},
+        "rateLimitBurst": {"type": "integer", "minimum": 1},
+        "artifactPathStyle": {"type": "boolean"},
+        "artifactCreateBucket": {"type": "boolean"}
+      }
+    },
+    "secret": {"type": "object"},
+    "replicas": {
+      "type": "object",
+      "properties": {
+        "controlPlane": {"type": "integer", "minimum": 1},
+        "scheduler": {"type": "integer", "minimum": 1},
+        "web": {"type": "integer", "minimum": 1}
+      }
+    },
+    "workerPools": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["name", "enabled", "type", "replicas", "credentialSecretKey", "resources", "autoscaling"],
+        "properties": {
+          "name": {"type": "string", "pattern": "^[a-z0-9]([-a-z0-9]*[a-z0-9])?$"},
+          "enabled": {"type": "boolean"},
+          "type": {"type": "string", "enum": ["go", "python"]},
+          "replicas": {"type": "integer", "minimum": 0}
+        }
+      }
+    }
+  }
+}

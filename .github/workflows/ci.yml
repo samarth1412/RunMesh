@@ -42,6 +42,25 @@ jobs:
       - uses: bufbuild/buf-setup-action@v1
       - run: buf lint
       - run: buf breaking --against '.git#branch=origin/main' || test "${{ github.event_name }}" = push
+  deployment:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: hashicorp/setup-terraform@v3
+        with: {terraform_version: 1.10.5}
+      - uses: azure/setup-helm@v4
+        with: {version: v3.17.3}
+      - name: Install manifest validators
+        run: |
+          curl -sSfL https://github.com/rhysd/actionlint/releases/download/v1.7.7/actionlint_1.7.7_linux_x86_64.tar.gz | sudo tar -xz -C /usr/local/bin actionlint
+          curl -sSfL https://github.com/yannh/kubeconform/releases/download/v0.7.0/kubeconform-linux-amd64.tar.gz | sudo tar -xz -C /usr/local/bin kubeconform
+      - run: actionlint
+      - run: terraform -chdir=infra/terraform fmt -check -recursive
+      - run: terraform -chdir=infra/terraform init -backend=false
+      - run: terraform -chdir=infra/terraform validate
+      - run: terraform -chdir=infra/terraform test
+      - run: helm lint deploy/helm/runmesh --set secret.databaseURL=postgres://db --set secret.redisURL=redis://redis --set secret.internalToken=test --set secret.apiKeyPepper=test
+      - run: helm template runmesh deploy/helm/runmesh --set secret.databaseURL=postgres://db --set secret.redisURL=redis://redis --set secret.internalToken=test --set secret.apiKeyPepper=test | kubeconform -strict -summary -kubernetes-version 1.31.0
   integration:
     runs-on: ubuntu-latest
     steps:
@@ -60,6 +79,19 @@ jobs:
         with: {context: ., build-args: "SERVICE=${{ matrix.service }}", tags: "runmesh/${{ matrix.service }}:${{ github.sha }}", load: true}
       - uses: aquasecurity/trivy-action@v0.36.0
         with: {image-ref: "runmesh/${{ matrix.service }}:${{ github.sha }}", severity: CRITICAL, exit-code: "1", ignore-unfixed: true}
+  kind-upgrade:
+    runs-on: ubuntu-latest
+    needs: [deployment]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: azure/setup-helm@v4
+        with: {version: v3.17.3}
+      - name: Install kind
+        run: |
+          curl -sSfLo kind https://kind.sigs.k8s.io/dl/v0.27.0/kind-linux-amd64
+          chmod +x kind
+          sudo mv kind /usr/local/bin/kind
+      - run: tests/deployment/kind-rolling-upgrade.sh
   compose-e2e:
     runs-on: ubuntu-latest
     needs: [containers]

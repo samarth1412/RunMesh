@@ -27,6 +27,7 @@ type Config struct {
 	OIDCAudience           string
 	OIDCJWKSURL            string
 	OIDCTenantClaim        string
+	CORSAllowlist          []string
 	APIKeyPepper           string
 	RedisURL               string
 	RateLimitRate          int
@@ -60,6 +61,7 @@ func Load() (Config, error) {
 		OIDCAudience:           env("RUNMESH_OIDC_AUDIENCE", "runmesh-web"),
 		OIDCJWKSURL:            env("RUNMESH_OIDC_JWKS_URL", ""),
 		OIDCTenantClaim:        env("RUNMESH_OIDC_TENANT_CLAIM", "runmesh_tenant_id"),
+		CORSAllowlist:          splitNonEmpty(env("RUNMESH_CORS_ALLOWLIST", "http://localhost:3000,http://localhost:5173")),
 		APIKeyPepper:           env("RUNMESH_API_KEY_PEPPER", ""),
 		RedisURL:               env("RUNMESH_REDIS_URL", "redis://localhost:6379/0"),
 		ArtifactEndpoint:       env("RUNMESH_ARTIFACT_ENDPOINT", ""),
@@ -120,6 +122,15 @@ func env(key, fallback string) string {
 		return v
 	}
 	return fallback
+}
+func splitNonEmpty(value string) []string {
+	result := []string{}
+	for _, item := range strings.Split(value, ",") {
+		if item = strings.TrimSpace(item); item != "" {
+			result = append(result, item)
+		}
+	}
+	return result
 }
 func envBool(key string, fallback bool) bool {
 	v := os.Getenv(key)

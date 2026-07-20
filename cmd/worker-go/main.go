@@ -27,6 +27,9 @@ type dispatch struct {
 }
 
 func main() {
+	if len(os.Args) > 1 && os.Args[1] == "--healthcheck" {
+		return
+	}
 	telemetry.ConfigureLogging("runmesh-worker-go")
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()

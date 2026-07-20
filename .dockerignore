@@ -1,0 +1,15 @@
+.git
+.github
+.terraform
+**/.terraform
+**/node_modules
+**/dist
+**/__pycache__
+**/.pytest_cache
+**/.mypy_cache
+**/.ruff_cache
+coverage.out
+compose.log
+playwright-report
+test-results
+tests/benchmarks/results

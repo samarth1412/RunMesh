@@ -1,17 +1,77 @@
+{{- $components := dict "control-plane" .Values.autoscaling.controlPlane "scheduler" .Values.autoscaling.scheduler "web" .Values.autoscaling.web }}
+{{- range $component, $autoscaling := $components }}
+{{- if $.Values.pdb.enabled }}
 apiVersion: policy/v1
 kind: PodDisruptionBudget
-metadata: {name: runmesh-control-plane}
-spec: {minAvailable: 1, selector: {matchLabels: {app.kubernetes.io/name: runmesh, app.kubernetes.io/component: control-plane}}}
+metadata:
+  name: runmesh-{{ $component }}
+  labels:
+    {{- include "runmesh.labels" $ | nindent 4 }}
+spec:
+  minAvailable: {{ $.Values.pdb.minAvailable }}
+  selector:
+    matchLabels: {app.kubernetes.io/name: runmesh, app.kubernetes.io/instance: {{ $.Release.Name }}, app.kubernetes.io/component: {{ $component }}}
 ---
+{{- end }}
+{{- if $autoscaling.enabled }}
 apiVersion: autoscaling/v2
 kind: HorizontalPodAutoscaler
-metadata: {name: runmesh-control-plane}
+metadata:
+  name: runmesh-{{ $component }}
+  labels:
+    {{- include "runmesh.labels" $ | nindent 4 }}
 spec:
-  scaleTargetRef: {apiVersion: apps/v1, kind: Deployment, name: runmesh-control-plane}
-  minReplicas: 2
-  maxReplicas: 10
-  metrics: [{type: Resource, resource: {name: cpu, target: {type: Utilization, averageUtilization: 70}}}]
+  scaleTargetRef: {apiVersion: apps/v1, kind: Deployment, name: runmesh-{{ $component }}}
+  minReplicas: {{ $autoscaling.minReplicas }}
+  maxReplicas: {{ $autoscaling.maxReplicas }}
+  behavior:
+    scaleDown: {stabilizationWindowSeconds: 300}
+    scaleUp: {stabilizationWindowSeconds: 30}
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target: {type: Utilization, averageUtilization: {{ $autoscaling.targetCPUUtilizationPercentage }}}
 ---
+{{- end }}
+{{- end }}
+{{- range $pool := .Values.workerPools }}
+{{- if and $pool.enabled $.Values.pdb.enabled }}
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: runmesh-worker-{{ $pool.name }}
+  labels:
+    {{- include "runmesh.labels" $ | nindent 4 }}
+spec:
+  minAvailable: {{ $.Values.pdb.minAvailable }}
+  selector:
+    matchLabels: {app.kubernetes.io/name: runmesh, app.kubernetes.io/instance: {{ $.Release.Name }}, app.kubernetes.io/component: worker, runmesh.io/worker-pool: {{ $pool.name }}}
+---
+{{- end }}
+{{- if and $pool.enabled $pool.autoscaling.enabled }}
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: runmesh-worker-{{ $pool.name }}
+  labels:
+    {{- include "runmesh.labels" $ | nindent 4 }}
+spec:
+  scaleTargetRef: {apiVersion: apps/v1, kind: Deployment, name: runmesh-worker-{{ $pool.name }}}
+  minReplicas: {{ $pool.autoscaling.minReplicas }}
+  maxReplicas: {{ $pool.autoscaling.maxReplicas }}
+  behavior:
+    scaleDown: {stabilizationWindowSeconds: 300}
+    scaleUp: {stabilizationWindowSeconds: 30}
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target: {type: Utilization, averageUtilization: {{ $pool.autoscaling.targetCPUUtilizationPercentage }}}
+---
+{{- end }}
+{{- end }}
+{{- if .Values.networkPolicy.enabled }}
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata: {name: runmesh-default-deny}
@@ -19,8 +79,70 @@ spec: {podSelector: {}, policyTypes: [Ingress, Egress]}
 ---
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
-metadata: {name: runmesh-web-to-api}
+metadata: {name: runmesh-dns-egress}
 spec:
-  podSelector: {matchLabels: {app.kubernetes.io/name: runmesh, app.kubernetes.io/component: control-plane}}
+  podSelector: {matchLabels: {app.kubernetes.io/name: runmesh, app.kubernetes.io/instance: {{ .Release.Name }}}}
+  policyTypes: [Egress]
+  egress:
+    - ports: [{port: 53, protocol: UDP}, {port: 53, protocol: TCP}]
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata: {name: runmesh-ingress}
+spec:
+  podSelector:
+    matchExpressions:
+      - {key: app.kubernetes.io/name, operator: In, values: [runmesh]}
+      - {key: app.kubernetes.io/instance, operator: In, values: [{{ .Release.Name }}]}
+      - {key: app.kubernetes.io/component, operator: In, values: [web, control-plane]}
   policyTypes: [Ingress]
-  ingress: [{from: [{podSelector: {matchLabels: {app.kubernetes.io/name: runmesh, app.kubernetes.io/component: web}}}], ports: [{port: 8080, protocol: TCP}]}]
+  ingress:
+    - from:
+        - namespaceSelector: {matchLabels: {kubernetes.io/metadata.name: {{ .Values.networkPolicy.ingressNamespace }}}}
+      ports: [{port: 3000, protocol: TCP}, {port: 8080, protocol: TCP}]
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata: {name: runmesh-monitoring-ingress}
+spec:
+  podSelector:
+    matchExpressions:
+      - {key: app.kubernetes.io/name, operator: In, values: [runmesh]}
+      - {key: app.kubernetes.io/instance, operator: In, values: [{{ .Release.Name }}]}
+      - {key: app.kubernetes.io/component, operator: In, values: [control-plane, scheduler]}
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - namespaceSelector: {matchLabels: {kubernetes.io/metadata.name: {{ .Values.networkPolicy.monitoringNamespace }}}}
+      ports: [{port: 8080, protocol: TCP}, {port: 9091, protocol: TCP}]
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata: {name: runmesh-control-plane-ingress}
+spec:
+  podSelector: {matchLabels: {app.kubernetes.io/name: runmesh, app.kubernetes.io/instance: {{ .Release.Name }}, app.kubernetes.io/component: control-plane}}
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - podSelector:
+            matchExpressions:
+              - {key: app.kubernetes.io/component, operator: In, values: [web, worker]}
+      ports: [{port: 8080, protocol: TCP}, {port: 7001, protocol: TCP}]
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata: {name: runmesh-service-egress}
+spec:
+  podSelector:
+    matchExpressions:
+      - {key: app.kubernetes.io/name, operator: In, values: [runmesh]}
+  policyTypes: [Egress]
+  egress:
+    - to:
+        - podSelector: {matchLabels: {app.kubernetes.io/name: runmesh, app.kubernetes.io/instance: {{ .Release.Name }}, app.kubernetes.io/component: control-plane}}
+      ports: [{port: 8080, protocol: TCP}, {port: 7001, protocol: TCP}]
+    - ports:
+        {{- range .Values.networkPolicy.externalPorts }}
+        - {port: {{ . }}, protocol: TCP}
+        {{- end }}
+{{- end }}

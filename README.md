@@ -59,6 +59,8 @@ The bundled example Python worker handles `examples.greet`, `examples.upper`, an
 
 See [docs/delivery-semantics.md](docs/delivery-semantics.md) and [docs/architecture.md](docs/architecture.md).
 
+Production Helm, AWS validation, release images, and rolling-upgrade instructions are in [docs/deployment.md](docs/deployment.md).
+
 ## Repository map
 
 - `cmd/control-plane`: public REST API and worker callbacks

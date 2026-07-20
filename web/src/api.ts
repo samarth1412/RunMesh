@@ -1,7 +1,8 @@
 import type { Run, TaskRun, Worker, Workflow } from './types'
 import { bearerToken } from './auth'
+import { runtimeConfig } from './runtime'
 
-const base = import.meta.env.VITE_API_URL ?? ''
+const base = runtimeConfig.apiUrl ?? import.meta.env.VITE_API_URL ?? ''
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const token = await bearerToken()
   const response = await fetch(base + path, { ...init, headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}), ...init?.headers } })
