@@ -227,7 +227,8 @@ func (s *Server) deadLetter(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, 200, map[string]any{"items": items})
 }
 func (s *Server) replay(w http.ResponseWriter, r *http.Request) {
-	if handleErr(w, s.Store.ReplayDead(r.Context(), auth.PrincipalFrom(r.Context()).TenantID, r.PathValue("id"))) {
+	p := auth.PrincipalFrom(r.Context())
+	if handleErr(w, s.Store.ReplayDead(r.Context(), p.TenantID, p.UserID, r.PathValue("id"))) {
 		return
 	}
 	writeJSON(w, 202, map[string]string{"status": "READY"})

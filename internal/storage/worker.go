@@ -230,15 +230,39 @@ func (s *Store) DeadLetter(ctx context.Context, tenantID string) ([]workflow.Tas
 	}
 	return out, rows.Err()
 }
-func (s *Store) ReplayDead(ctx context.Context, tenantID, taskID string) error {
-	ct, err := s.Pool.Exec(ctx, `UPDATE task_runs t SET status='READY',available_at=now(),maximum_attempts=GREATEST(maximum_attempts,attempt_count+1),updated_at=now() FROM workflow_runs r WHERE t.workflow_run_id=r.id AND t.id=$1 AND r.tenant_id=$2 AND t.status='DEAD'`, taskID, tenantID)
+func (s *Store) ReplayDead(ctx context.Context, tenantID, userID, taskID string) error {
+	tx, err := s.Pool.Begin(ctx)
 	if err != nil {
 		return err
 	}
-	if ct.RowsAffected() == 0 {
+	defer tx.Rollback(ctx)
+	var runID, taskKey string
+	err = tx.QueryRow(ctx, `SELECT t.workflow_run_id,t.task_key FROM task_runs t JOIN workflow_runs r ON r.id=t.workflow_run_id WHERE t.id=$1 AND r.tenant_id=$2 AND t.status='DEAD' FOR UPDATE OF t,r`, taskID, tenantID).Scan(&runID, &taskKey)
+	if errors.Is(err, pgx.ErrNoRows) {
 		return ErrNotFound
 	}
-	return nil
+	if err != nil {
+		return err
+	}
+	if _, err = tx.Exec(ctx, `UPDATE workflow_runs SET status='RUNNING',completed_at=NULL WHERE id=$1 AND status='FAILED'`, runID); err != nil {
+		return err
+	}
+	if _, err = tx.Exec(ctx, `UPDATE task_runs SET status='READY',available_at=now(),maximum_attempts=GREATEST(maximum_attempts,attempt_count+1),updated_at=now() WHERE id=$1`, taskID); err != nil {
+		return err
+	}
+	// Retry exhaustion cancels work that has not started. Rebuild those states
+	// from dependency completion and any retry delay that was already assigned.
+	if _, err = tx.Exec(ctx, `UPDATE task_runs t SET status=CASE WHEN EXISTS(SELECT 1 FROM task_dependencies d JOIN task_runs upstream ON upstream.id=d.depends_on_task_run_id WHERE d.task_run_id=t.id AND upstream.status<>'SUCCEEDED') THEN 'BLOCKED'::task_status WHEN t.available_at>now() THEN 'RETRY_WAIT'::task_status ELSE 'READY'::task_status END,updated_at=now() WHERE t.workflow_run_id=$1 AND t.status='CANCELLED'`, runID); err != nil {
+		return err
+	}
+	payload := mustJSON(map[string]any{"workflow_run_id": runID, "task_run_id": taskID, "task_key": taskKey})
+	if _, err = tx.Exec(ctx, `INSERT INTO outbox_events(aggregate_type,aggregate_id,event_type,payload,trace_parent) SELECT 'task_run',$1,'task.replayed',$2,trace_parent FROM workflow_runs WHERE id=$3`, taskID, payload, runID); err != nil {
+		return err
+	}
+	if _, err = tx.Exec(ctx, `INSERT INTO audit_events(tenant_id,actor_id,action,resource_type,resource_id) VALUES($1,$2,'task.replay','task_run',$3)`, tenantID, nullableUUID(userID), taskID); err != nil {
+		return err
+	}
+	return tx.Commit(ctx)
 }
 
 func mustJSON(v any) []byte {
