@@ -312,6 +312,153 @@ func TestDuplicateDispatchIsLeasedOnce(t *testing.T) {
 	assertOutboxEvent(t, ctx, store, taskID, "task.succeeded")
 }
 
+func TestTransactionalOutboxRecoversAfterBrokerOutage(t *testing.T) {
+	ctx := context.Background()
+	store := postgresStore(t, ctx)
+	container, broker := redpandaContainer(t, ctx)
+	topic := "outbox-recovery"
+	createTopic(t, ctx, broker, topic)
+	publisher := messaging.NewPublisher([]string{broker}, topic)
+	t.Cleanup(func() { _ = publisher.Close() })
+	service := scheduler.Service{Store: store, Publisher: publisher}
+	tenantID := "00000000-0000-0000-0000-000000000001"
+	userID := "00000000-0000-0000-0000-000000000001"
+	dag := workflow.DAG{Tasks: map[string]workflow.TaskSpec{
+		"durable": {Handler: "test.durable"},
+	}}
+	definition, err := store.CreateWorkflow(ctx, tenantID, userID, "outbox-recovery", dag)
+	if err != nil {
+		t.Fatal(err)
+	}
+	run, created, err := store.CreateRun(ctx, tenantID, userID, definition.ID, "outbox-recovery", json.RawMessage(`{"value":1}`))
+	if err != nil || !created {
+		t.Fatalf("create run: created=%v err=%v", created, err)
+	}
+	if err = service.RunOnce(ctx); err != nil {
+		t.Fatal(err)
+	}
+	run, err = store.GetRun(ctx, tenantID, run.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	taskID := taskByKey(t, run, "durable").ID
+	if taskByKey(t, run, "durable").Status != "DISPATCHING" {
+		t.Fatalf("task state was not committed before publication: %+v", run.Tasks)
+	}
+
+	type outboxEvent struct {
+		id, eventType string
+	}
+	rows, err := store.Pool.Query(ctx, `SELECT id,event_type FROM outbox_events WHERE aggregate_id IN ($1,$2) AND published_at IS NULL ORDER BY created_at,id`, run.ID, taskID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var pending []outboxEvent
+	for rows.Next() {
+		var event outboxEvent
+		if err = rows.Scan(&event.id, &event.eventType); err != nil {
+			rows.Close()
+			t.Fatal(err)
+		}
+		pending = append(pending, event)
+	}
+	rows.Close()
+	if err = rows.Err(); err != nil {
+		t.Fatal(err)
+	}
+	if len(pending) != 2 {
+		t.Fatalf("pending outbox events=%+v, want workflow creation and task dispatch", pending)
+	}
+
+	provider, err := testcontainers.NewDockerProvider()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = provider.Close() })
+	if err = provider.Client().ContainerPause(ctx, container.GetContainerID()); err != nil {
+		t.Fatal(err)
+	}
+	brokerSuspended := true
+	t.Cleanup(func() {
+		if brokerSuspended {
+			_ = provider.Client().ContainerUnpause(context.Background(), container.GetContainerID())
+		}
+	})
+	downContext, cancelDown := context.WithTimeout(ctx, 2*time.Second)
+	err = service.PublishOnce(downContext)
+	cancelDown()
+	if err == nil {
+		t.Fatal("outbox publication succeeded while Redpanda was unavailable")
+	}
+	var unpublished int
+	if err = store.Pool.QueryRow(ctx, `SELECT count(*) FROM outbox_events WHERE id IN ($1,$2) AND published_at IS NULL`, pending[0].id, pending[1].id).Scan(&unpublished); err != nil {
+		t.Fatal(err)
+	}
+	if unpublished != len(pending) {
+		t.Fatalf("broker failure marked durable events published: unpublished=%d want=%d", unpublished, len(pending))
+	}
+	committed, err := store.GetRun(ctx, tenantID, run.ID)
+	if err != nil || taskByKey(t, committed, "durable").Status != "DISPATCHING" {
+		t.Fatalf("broker failure changed authoritative workflow state: run=%+v err=%v", committed, err)
+	}
+
+	if err = provider.Client().ContainerUnpause(ctx, container.GetContainerID()); err != nil {
+		t.Fatal(err)
+	}
+	brokerSuspended = false
+	recoveryContext, cancelRecovery := context.WithTimeout(ctx, 30*time.Second)
+	defer cancelRecovery()
+	for {
+		err = service.PublishOnce(recoveryContext)
+		if err == nil {
+			break
+		}
+		select {
+		case <-recoveryContext.Done():
+			t.Fatalf("outbox did not recover before deadline: last error: %v", err)
+		case <-time.After(100 * time.Millisecond):
+		}
+	}
+	if err = store.Pool.QueryRow(ctx, `SELECT count(*) FROM outbox_events WHERE id IN ($1,$2) AND published_at IS NULL`, pending[0].id, pending[1].id).Scan(&unpublished); err != nil {
+		t.Fatal(err)
+	}
+	if unpublished != 0 {
+		t.Fatalf("outbox backlog did not drain after broker recovery: unpublished=%d", unpublished)
+	}
+
+	reader := kafka.NewReader(kafka.ReaderConfig{Brokers: []string{broker}, Topic: topic, Partition: 0, MinBytes: 1, MaxBytes: 1e6, StartOffset: kafka.FirstOffset})
+	t.Cleanup(func() { _ = reader.Close() })
+	readContext, cancelRead := context.WithTimeout(ctx, 10*time.Second)
+	defer cancelRead()
+	want := make(map[string]string, len(pending))
+	for _, event := range pending {
+		want[event.id] = event.eventType
+	}
+	for range pending {
+		message, readErr := reader.FetchMessage(readContext)
+		if readErr != nil {
+			t.Fatal(readErr)
+		}
+		eventID := headerValue(message.Headers, "event_id")
+		eventType := headerValue(message.Headers, "event_type")
+		if string(message.Key) != run.ID || want[eventID] != eventType {
+			t.Fatalf("recovered message: key=%q event_id=%q event_type=%q", message.Key, eventID, eventType)
+		}
+		delete(want, eventID)
+	}
+	if len(want) != 0 {
+		t.Fatalf("outbox messages were not recovered: %+v", want)
+	}
+	if err = service.PublishOnce(ctx); err != nil {
+		t.Fatal(err)
+	}
+	noDuplicateContext, cancelNoDuplicate := context.WithTimeout(ctx, 500*time.Millisecond)
+	defer cancelNoDuplicate()
+	if message, readErr := reader.FetchMessage(noDuplicateContext); !errors.Is(readErr, context.DeadlineExceeded) {
+		t.Fatalf("already-published events were sent again: message=%+v err=%v", message, readErr)
+	}
+}
+
 func TestRunCancellationFencesWorkers(t *testing.T) {
 	ctx := context.Background()
 	store := postgresStore(t, ctx)
@@ -680,6 +827,12 @@ func postgresStore(t *testing.T, ctx context.Context) *storage.Store {
 
 func redpandaBroker(t *testing.T, ctx context.Context) string {
 	t.Helper()
+	_, broker := redpandaContainer(t, ctx)
+	return broker
+}
+
+func redpandaContainer(t *testing.T, ctx context.Context) (*redpanda.Container, string) {
+	t.Helper()
 	container, err := redpanda.Run(ctx, "redpandadata/redpanda:v24.3.15", redpanda.WithAutoCreateTopics())
 	if err != nil {
 		t.Fatal(err)
@@ -689,7 +842,7 @@ func redpandaBroker(t *testing.T, ctx context.Context) string {
 	if err != nil {
 		t.Fatal(err)
 	}
-	return broker
+	return container, broker
 }
 
 func createTopic(t *testing.T, ctx context.Context, broker, topic string) {
@@ -702,6 +855,15 @@ func createTopic(t *testing.T, ctx context.Context, broker, topic string) {
 	if err = connection.CreateTopics(kafka.TopicConfig{Topic: topic, NumPartitions: 1, ReplicationFactor: 1}); err != nil {
 		t.Fatal(err)
 	}
+}
+
+func headerValue(headers []kafka.Header, key string) string {
+	for _, header := range headers {
+		if header.Key == key {
+			return string(header.Value)
+		}
+	}
+	return ""
 }
 
 func start(t *testing.T, ctx context.Context, request testcontainers.ContainerRequest) testcontainers.Container {

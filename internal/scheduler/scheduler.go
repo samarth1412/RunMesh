@@ -39,6 +39,13 @@ func (s *Service) RunOnce(ctx context.Context) error {
 	return s.tick(ctx)
 }
 
+// PublishOnce executes one transactional outbox publication cycle without
+// starting the background loop. It is useful for deterministic recovery checks
+// and administrative tooling.
+func (s *Service) PublishOnce(ctx context.Context) error {
+	return s.publishBatch(ctx)
+}
+
 func (s *Service) runScheduler(ctx context.Context) error {
 	ticker := time.NewTicker(s.ScheduleInterval)
 	defer ticker.Stop()
