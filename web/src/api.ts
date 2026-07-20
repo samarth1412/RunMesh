@@ -1,8 +1,10 @@
 import type { Run, TaskRun, Worker, Workflow } from './types'
+import { bearerToken } from './auth'
 
 const base = import.meta.env.VITE_API_URL ?? ''
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
-  const response = await fetch(base + path, { ...init, headers: { 'Content-Type': 'application/json', ...init?.headers } })
+  const token = await bearerToken()
+  const response = await fetch(base + path, { ...init, headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}), ...init?.headers } })
   if (!response.ok) throw new Error((await response.json().catch(() => null))?.error ?? `${response.status} ${response.statusText}`)
   return response.status === 204 ? (undefined as T) : response.json()
 }

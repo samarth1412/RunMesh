@@ -8,6 +8,7 @@ import (
 	"time"
 
 	runmeshv1 "github.com/runmesh/runmesh/gen/runmesh/v1"
+	"github.com/runmesh/runmesh/internal/auth"
 	"github.com/runmesh/runmesh/internal/storage"
 	"github.com/runmesh/runmesh/internal/workflow"
 	"google.golang.org/grpc/codes"
@@ -21,18 +22,32 @@ type WorkerServer struct {
 	runmeshv1.UnimplementedWorkerServiceServer
 	Store         *storage.Store
 	LeaseDuration time.Duration
-	Token         string
+	Authenticator *auth.Authenticator
 }
 
-func (s *WorkerServer) authorize(ctx context.Context) error {
+func (s *WorkerServer) authorize(ctx context.Context) (auth.Principal, error) {
 	values := metadata.ValueFromIncomingContext(ctx, "authorization")
-	if len(values) != 1 || strings.TrimPrefix(values[0], "Bearer ") != s.Token {
-		return status.Error(codes.Unauthenticated, "invalid internal token")
+	if len(values) != 1 {
+		return auth.Principal{}, status.Error(codes.Unauthenticated, "invalid worker credential")
+	}
+	principal, err := s.Authenticator.AuthenticateWorker(ctx, strings.TrimPrefix(values[0], "Bearer "))
+	if err != nil {
+		return auth.Principal{}, status.Error(codes.Unauthenticated, "invalid worker credential")
+	}
+	return principal, nil
+}
+func (s *WorkerServer) authorizeTask(ctx context.Context, taskID string) error {
+	principal, err := s.authorize(ctx)
+	if err != nil {
+		return err
+	}
+	if err = s.Store.TaskBelongsToTenant(ctx, taskID, principal.TenantID); err != nil {
+		return rpcError(err)
 	}
 	return nil
 }
 func (s *WorkerServer) Lease(ctx context.Context, request *runmeshv1.LeaseRequest) (*runmeshv1.LeaseResponse, error) {
-	if err := s.authorize(ctx); err != nil {
+	if err := s.authorizeTask(ctx, request.TaskRunId); err != nil {
 		return nil, err
 	}
 	task, err := s.Store.LeaseTask(ctx, request.TaskRunId, request.WorkerId, s.LeaseDuration)
@@ -42,7 +57,7 @@ func (s *WorkerServer) Lease(ctx context.Context, request *runmeshv1.LeaseReques
 	return &runmeshv1.LeaseResponse{Task: snapshot(task)}, nil
 }
 func (s *WorkerServer) Start(ctx context.Context, request *runmeshv1.StartRequest) (*runmeshv1.StartResponse, error) {
-	if err := s.authorize(ctx); err != nil {
+	if err := s.authorizeTask(ctx, request.TaskRunId); err != nil {
 		return nil, err
 	}
 	task, err := s.Store.StartTask(ctx, request.TaskRunId, request.WorkerId)
@@ -52,7 +67,7 @@ func (s *WorkerServer) Start(ctx context.Context, request *runmeshv1.StartReques
 	return &runmeshv1.StartResponse{Task: snapshot(task)}, nil
 }
 func (s *WorkerServer) Heartbeat(ctx context.Context, request *runmeshv1.HeartbeatRequest) (*runmeshv1.HeartbeatResponse, error) {
-	if err := s.authorize(ctx); err != nil {
+	if err := s.authorizeTask(ctx, request.TaskRunId); err != nil {
 		return nil, err
 	}
 	expires, cancelled, err := s.Store.HeartbeatTask(ctx, request.TaskRunId, request.WorkerId, s.LeaseDuration)
@@ -62,7 +77,7 @@ func (s *WorkerServer) Heartbeat(ctx context.Context, request *runmeshv1.Heartbe
 	return &runmeshv1.HeartbeatResponse{LeaseExpiresAt: timestamppb.New(expires), Cancelled: cancelled}, nil
 }
 func (s *WorkerServer) Complete(ctx context.Context, request *runmeshv1.CompleteRequest) (*runmeshv1.CompleteResponse, error) {
-	if err := s.authorize(ctx); err != nil {
+	if err := s.authorizeTask(ctx, request.TaskRunId); err != nil {
 		return nil, err
 	}
 	outputValue := map[string]any{}
@@ -77,7 +92,7 @@ func (s *WorkerServer) Complete(ctx context.Context, request *runmeshv1.Complete
 	return &runmeshv1.CompleteResponse{Task: snapshot(task)}, nil
 }
 func (s *WorkerServer) Fail(ctx context.Context, request *runmeshv1.FailRequest) (*runmeshv1.FailResponse, error) {
-	if err := s.authorize(ctx); err != nil {
+	if err := s.authorizeTask(ctx, request.TaskRunId); err != nil {
 		return nil, err
 	}
 	task, err := s.Store.FailTask(ctx, request.TaskRunId, request.WorkerId, storage.Failure{Retryable: request.Retryable, ErrorType: request.ErrorType, ErrorMessage: request.ErrorMessage, TraceID: request.TraceId})

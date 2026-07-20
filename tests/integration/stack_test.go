@@ -16,6 +16,7 @@ import (
 
 	toxiproxyclient "github.com/Shopify/toxiproxy/v2/client"
 	"github.com/jackc/pgx/v5"
+	"github.com/runmesh/runmesh/internal/auth"
 	"github.com/runmesh/runmesh/internal/messaging"
 	"github.com/runmesh/runmesh/internal/scheduler"
 	"github.com/runmesh/runmesh/internal/storage"
@@ -93,6 +94,89 @@ func TestPostgresIdempotencyAndConcurrentClaims(t *testing.T) {
 	wg.Wait()
 	if len(claimed) != 40 {
 		t.Fatalf("claimed %d tasks, want 40", len(claimed))
+	}
+}
+
+func TestProductionAPIKeysAndWorkerTenantIsolation(t *testing.T) {
+	ctx := context.Background()
+	store := postgresStore(t, ctx)
+	const tenantOne = "00000000-0000-0000-0000-000000000001"
+	const userOne = "00000000-0000-0000-0000-000000000001"
+	const tenantTwo = "00000000-0000-0000-0000-000000000010"
+	const userTwo = "00000000-0000-0000-0000-000000000010"
+	if _, err := store.Pool.Exec(ctx, `INSERT INTO tenants(id,name,plan) VALUES($1,'Other tenant','development')`, tenantTwo); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.Pool.Exec(ctx, `INSERT INTO users(id,tenant_id,oidc_subject,email,role) VALUES($1,$2,'other-admin','other@example.com','admin')`, userTwo, tenantTwo); err != nil {
+		t.Fatal(err)
+	}
+
+	id, token, hash, err := auth.GenerateAPIKey("pepper")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = store.CreateAPIKey(ctx, id, tenantOne, userOne, "worker", []string{"workers:execute"}, nil, hash); err != nil {
+		t.Fatal(err)
+	}
+	authenticator := auth.New(store.Pool, auth.Config{APIKeyPepper: "pepper"})
+	principal, err := authenticator.Authenticate(ctx, token)
+	if err != nil || principal.TenantID != tenantOne || !auth.HasScope(principal, "workers:execute") {
+		t.Fatalf("API key principal=%+v err=%v", principal, err)
+	}
+
+	dag := workflow.DAG{Tasks: map[string]workflow.TaskSpec{"secure": {Handler: "test.secure"}}}
+	definition, err := store.CreateWorkflow(ctx, tenantOne, userOne, "tenant-isolation", dag)
+	if err != nil {
+		t.Fatal(err)
+	}
+	run, created, err := store.CreateRun(ctx, tenantOne, userOne, definition.ID, "tenant-isolation", json.RawMessage(`{}`))
+	if err != nil || !created {
+		t.Fatalf("create run: created=%v err=%v", created, err)
+	}
+	run, err = store.GetRun(ctx, tenantOne, run.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	taskID := taskByKey(t, run, "secure").ID
+	if err = store.TaskBelongsToTenant(ctx, taskID, tenantOne); err != nil {
+		t.Fatal(err)
+	}
+	if err = store.TaskBelongsToTenant(ctx, taskID, tenantTwo); !errors.Is(err, storage.ErrNotFound) {
+		t.Fatalf("cross-tenant task lookup error=%v, want not found", err)
+	}
+	if err = store.WorkerHeartbeat(ctx, tenantOne, "shared-worker-id", []string{"test.secure"}, 1, nil); err != nil {
+		t.Fatal(err)
+	}
+	if err = store.WorkerHeartbeat(ctx, tenantTwo, "shared-worker-id", []string{"other.secure"}, 2, nil); err != nil {
+		t.Fatal(err)
+	}
+	workersOne, err := store.ListWorkers(ctx, tenantOne)
+	if err != nil || len(workersOne) != 1 || workersOne[0].ActiveTasks != 1 {
+		t.Fatalf("tenant one workers=%+v err=%v", workersOne, err)
+	}
+	workersTwo, err := store.ListWorkers(ctx, tenantTwo)
+	if err != nil || len(workersTwo) != 1 || workersTwo[0].ActiveTasks != 2 {
+		t.Fatalf("tenant two workers=%+v err=%v", workersTwo, err)
+	}
+
+	rotatedToken, rotatedHash, err := auth.GenerateAPIKeyForID(id, "pepper")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = store.RotateAPIKey(ctx, id, tenantOne, userOne, rotatedHash); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = authenticator.Authenticate(ctx, token); err == nil {
+		t.Fatal("old API key remained valid after rotation")
+	}
+	if _, err = authenticator.Authenticate(ctx, rotatedToken); err != nil {
+		t.Fatalf("rotated API key: %v", err)
+	}
+	if err = store.RevokeAPIKey(ctx, id, tenantOne, userOne); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = authenticator.Authenticate(ctx, rotatedToken); err == nil {
+		t.Fatal("revoked API key remained valid")
 	}
 }
 
@@ -1206,8 +1290,12 @@ func applyMigrations(t *testing.T, ctx context.Context, databaseURL string) {
 		t.Fatal(err)
 	}
 	defer connection.Close(ctx)
-	for _, name := range []string{"001_initial.up.sql", "002_seed_development.up.sql"} {
-		path := filepath.Join("..", "..", "migrations", name)
+	paths, err := filepath.Glob(filepath.Join("..", "..", "migrations", "*.up.sql"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, path := range paths {
+		name := filepath.Base(path)
 		sql, readErr := os.ReadFile(path)
 		if readErr != nil {
 			t.Fatal(readErr)

@@ -5,7 +5,28 @@ info:
   description: Multi-tenant workflow orchestration API. Task execution is at-least-once.
 servers:
   - url: http://localhost:8080
+security:
+  - bearerAuth: []
 paths:
+
+  /v1/api-keys:
+    get:
+      operationId: listAPIKeys
+      responses: {"200": {description: Tenant API keys without secret material}}
+    post:
+      operationId: createAPIKey
+      requestBody: {required: true, content: {application/json: {schema: {$ref: '#/components/schemas/APIKeyInput'}}}}
+      responses: {"201": {description: API key and one-time plaintext token}}
+  /v1/api-keys/{id}/rotate:
+    post:
+      operationId: rotateAPIKey
+      parameters: [{$ref: '#/components/parameters/ID'}]
+      responses: {"200": {description: Rotated API key and one-time plaintext token}}
+  /v1/api-keys/{id}:
+    delete:
+      operationId: revokeAPIKey
+      parameters: [{$ref: '#/components/parameters/ID'}]
+      responses: {"204": {description: Revoked}}
   /v1/workflows:
     get:
       operationId: listWorkflows
@@ -85,13 +106,25 @@ paths:
       parameters: [{$ref: '#/components/parameters/ID'}]
       responses: {"204": {description: Deleted}}
   /health/live:
-    get: {operationId: liveness, responses: {"200": {description: Process is live}}}
+    get: {security: [], operationId: liveness, responses: {"200": {description: Process is live}}}
   /health/ready:
-    get: {operationId: readiness, responses: {"200": {description: Dependencies are ready}, "503": {description: Dependency unavailable}}}
+    get: {security: [], operationId: readiness, responses: {"200": {description: Dependencies are ready}, "503": {description: Dependency unavailable}}}
 components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      description: OIDC access token or a tenant-scoped RunMesh API key
   parameters:
     ID: {name: id, in: path, required: true, schema: {type: string, format: uuid}}
   schemas:
+    APIKeyInput:
+      type: object
+      required: [name, scopes]
+      properties:
+        name: {type: string, maxLength: 100}
+        scopes: {type: array, minItems: 1, uniqueItems: true, items: {type: string}}
+        expires_at: {type: string, format: date-time}
     WorkflowInput:
       type: object
       required: [name, tasks]

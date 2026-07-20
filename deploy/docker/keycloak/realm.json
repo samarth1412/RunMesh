@@ -1,0 +1,47 @@
+{
+  "realm": "runmesh",
+  "enabled": true,
+  "displayName": "RunMesh Local",
+  "loginWithEmailAllowed": true,
+  "clients": [
+    {
+      "clientId": "runmesh-web",
+      "name": "RunMesh Dashboard",
+      "enabled": true,
+      "publicClient": true,
+      "standardFlowEnabled": true,
+      "directAccessGrantsEnabled": true,
+      "redirectUris": ["http://localhost:3000/*", "http://localhost:5173/*"],
+      "webOrigins": ["http://localhost:3000", "http://localhost:5173"],
+      "protocolMappers": [
+        {
+          "name": "runmesh audience",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-audience-mapper",
+          "consentRequired": false,
+          "config": {"included.client.audience": "runmesh-web", "id.token.claim": "true", "access.token.claim": "true"}
+        },
+        {
+          "name": "tenant",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-usermodel-attribute-mapper",
+          "consentRequired": false,
+          "config": {"user.attribute": "runmesh_tenant_id", "claim.name": "runmesh_tenant_id", "jsonType.label": "String", "id.token.claim": "true", "access.token.claim": "true", "userinfo.token.claim": "true"}
+        }
+      ]
+    }
+  ],
+  "users": [
+    {
+      "id": "11111111-1111-1111-1111-111111111111",
+      "username": "admin",
+      "firstName": "Local",
+      "lastName": "Administrator",
+      "email": "admin@runmesh.local",
+      "enabled": true,
+      "emailVerified": true,
+      "attributes": {"runmesh_tenant_id": ["00000000-0000-0000-0000-000000000001"]},
+      "credentials": [{"type": "password", "value": "runmesh", "temporary": false}]
+    }
+  ]
+}
