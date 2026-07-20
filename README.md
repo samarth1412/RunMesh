@@ -48,6 +48,7 @@ The bundled example Python worker handles `examples.greet`, `examples.upper`, an
 - Per-run event ordering through Kafka partition keys.
 - Idempotent workflow submission within a tenant.
 - PostgreSQL remains the source of truth through broker failures.
+- Redis enforces an atomic per-tenant API token bucket and fails closed in production without entering the execution path.
 - Every attempt is retained, including errors and trace IDs.
 
 See [docs/delivery-semantics.md](docs/delivery-semantics.md) and [docs/architecture.md](docs/architecture.md).

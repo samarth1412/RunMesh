@@ -27,6 +27,10 @@ type Config struct {
 	OIDCJWKSURL       string
 	OIDCTenantClaim   string
 	APIKeyPepper      string
+	RedisURL          string
+	RateLimitRate     int
+	RateLimitBurst    int
+	RateLimitFailOpen bool
 }
 
 func Load() (Config, error) {
@@ -46,8 +50,16 @@ func Load() (Config, error) {
 		OIDCJWKSURL:     env("RUNMESH_OIDC_JWKS_URL", ""),
 		OIDCTenantClaim: env("RUNMESH_OIDC_TENANT_CLAIM", "runmesh_tenant_id"),
 		APIKeyPepper:    env("RUNMESH_API_KEY_PEPPER", ""),
+		RedisURL:        env("RUNMESH_REDIS_URL", "redis://localhost:6379/0"),
 	}
 	var err error
+	if c.RateLimitRate, err = envInt("RUNMESH_RATE_LIMIT_RATE", 100); err != nil {
+		return Config{}, err
+	}
+	if c.RateLimitBurst, err = envInt("RUNMESH_RATE_LIMIT_BURST", 200); err != nil {
+		return Config{}, err
+	}
+	c.RateLimitFailOpen = envBool("RUNMESH_RATE_LIMIT_FAIL_OPEN", c.DevAuth)
 	if c.LeaseDuration, err = envDuration("RUNMESH_LEASE_DURATION", 30*time.Second); err != nil {
 		return Config{}, err
 	}
@@ -65,6 +77,12 @@ func Load() (Config, error) {
 	}
 	if !c.DevAuth && c.APIKeyPepper == "" {
 		return Config{}, fmt.Errorf("RUNMESH_API_KEY_PEPPER is required outside development")
+	}
+	if c.RateLimitRate <= 0 || c.RateLimitBurst <= 0 {
+		return Config{}, fmt.Errorf("rate limit rate and burst must be positive")
+	}
+	if !c.DevAuth && c.RateLimitFailOpen {
+		return Config{}, fmt.Errorf("RUNMESH_RATE_LIMIT_FAIL_OPEN cannot be enabled outside development")
 	}
 	return c, nil
 }
@@ -93,4 +111,16 @@ func envDuration(key string, fallback time.Duration) (time.Duration, error) {
 		return 0, fmt.Errorf("%s: %w", key, err)
 	}
 	return d, nil
+}
+
+func envInt(key string, fallback int) (int, error) {
+	value := os.Getenv(key)
+	if value == "" {
+		return fallback, nil
+	}
+	parsed, err := strconv.Atoi(value)
+	if err != nil {
+		return 0, fmt.Errorf("%s: %w", key, err)
+	}
+	return parsed, nil
 }

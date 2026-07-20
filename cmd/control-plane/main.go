@@ -15,6 +15,7 @@ import (
 	"github.com/runmesh/runmesh/internal/api"
 	"github.com/runmesh/runmesh/internal/auth"
 	"github.com/runmesh/runmesh/internal/config"
+	"github.com/runmesh/runmesh/internal/ratelimit"
 	workerrpc "github.com/runmesh/runmesh/internal/rpc"
 	"github.com/runmesh/runmesh/internal/storage"
 	"github.com/runmesh/runmesh/internal/telemetry"
@@ -57,7 +58,17 @@ func main() {
 		Dev: cfg.DevAuth, DevPrincipal: auth.Principal{TenantID: cfg.DevTenantID, UserID: cfg.DevUserID, Role: cfg.DevRole}, DevWorkerToken: cfg.InternalToken,
 		Issuer: cfg.OIDCIssuer, Audience: cfg.OIDCAudience, JWKSURL: cfg.OIDCJWKSURL, TenantClaim: cfg.OIDCTenantClaim, APIKeyPepper: cfg.APIKeyPepper,
 	})
-	server := api.New(store, cfg.LeaseDuration, authenticator.Middleware, authenticator.WorkerMiddleware, cfg.APIKeyPepper)
+	limiter, err := ratelimit.New(cfg.RedisURL, cfg.RateLimitRate, cfg.RateLimitBurst, cfg.RateLimitFailOpen, prometheus.DefaultRegisterer)
+	if err != nil {
+		slog.Error("rate limiter", "error", err)
+		os.Exit(1)
+	}
+	defer limiter.Close()
+	var redisReady func(context.Context) error
+	if !cfg.RateLimitFailOpen {
+		redisReady = limiter.Ping
+	}
+	server := api.New(store, cfg.LeaseDuration, authenticator.Middleware, authenticator.WorkerMiddleware, limiter.Middleware, redisReady, cfg.APIKeyPepper)
 	grpcListener, err := net.Listen("tcp", cfg.GRPCAddr)
 	if err != nil {
 		slog.Error("gRPC listener", "error", err)
