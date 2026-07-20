@@ -14,10 +14,13 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/runmesh/runmesh/internal/messaging"
 	"github.com/runmesh/runmesh/internal/scheduler"
 	"github.com/runmesh/runmesh/internal/storage"
 	"github.com/runmesh/runmesh/internal/workflow"
+	"github.com/segmentio/kafka-go"
 	"github.com/testcontainers/testcontainers-go"
+	"github.com/testcontainers/testcontainers-go/modules/redpanda"
 	"github.com/testcontainers/testcontainers-go/wait"
 )
 
@@ -178,6 +181,135 @@ func TestWorkerCrashLeaseRecovery(t *testing.T) {
 		t.Fatalf("replacement worker did not complete run: run=%+v err=%v", completed, err)
 	}
 	assertAttempt(t, ctx, store, taskID, 2, "worker-replacement", "SUCCEEDED", "")
+}
+
+func TestDuplicateDispatchIsLeasedOnce(t *testing.T) {
+	ctx := context.Background()
+	store := postgresStore(t, ctx)
+	broker := redpandaBroker(t, ctx)
+	tenantID := "00000000-0000-0000-0000-000000000001"
+	userID := "00000000-0000-0000-0000-000000000001"
+	dag := workflow.DAG{Tasks: map[string]workflow.TaskSpec{
+		"deduplicated": {Handler: "test.deduplicated"},
+	}}
+	definition, err := store.CreateWorkflow(ctx, tenantID, userID, "duplicate-dispatch", dag)
+	if err != nil {
+		t.Fatal(err)
+	}
+	run, created, err := store.CreateRun(ctx, tenantID, userID, definition.ID, "duplicate-dispatch", json.RawMessage(`{"value":1}`))
+	if err != nil || !created {
+		t.Fatalf("create run: created=%v err=%v", created, err)
+	}
+	service := scheduler.Service{Store: store}
+	if err = service.RunOnce(ctx); err != nil {
+		t.Fatal(err)
+	}
+	run, err = store.GetRun(ctx, tenantID, run.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	taskID := taskByKey(t, run, "deduplicated").ID
+	var dispatchPayload []byte
+	if err = store.Pool.QueryRow(ctx, `SELECT payload FROM outbox_events WHERE aggregate_id=$1 AND event_type='task.dispatch'`, taskID).Scan(&dispatchPayload); err != nil {
+		t.Fatal(err)
+	}
+
+	topic := "duplicate-dispatch"
+	createTopic(t, ctx, broker, topic)
+	publisher := messaging.NewPublisher([]string{broker}, topic)
+	t.Cleanup(func() { _ = publisher.Close() })
+	for range 2 {
+		if err = publisher.Publish(ctx, []byte(run.ID), dispatchPayload, map[string]string{"event_type": "task.dispatch"}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	reader := kafka.NewReader(kafka.ReaderConfig{
+		Brokers: []string{broker}, Topic: topic, GroupID: "duplicate-dispatch-workers",
+		MinBytes: 1, MaxBytes: 1e6, StartOffset: kafka.FirstOffset,
+	})
+	t.Cleanup(func() { _ = reader.Close() })
+	fetchContext, cancelFetch := context.WithTimeout(ctx, 10*time.Second)
+	defer cancelFetch()
+	messages := make([]kafka.Message, 2)
+	for i := range messages {
+		messages[i], err = reader.FetchMessage(fetchContext)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var envelope struct {
+			TaskRunID string `json:"task_run_id"`
+		}
+		if err = json.Unmarshal(messages[i].Value, &envelope); err != nil || envelope.TaskRunID != taskID {
+			t.Fatalf("duplicate dispatch %d: task=%q err=%v", i, envelope.TaskRunID, err)
+		}
+	}
+
+	type leaseResult struct {
+		workerID string
+		task     workflow.TaskRun
+		err      error
+	}
+	results := make(chan leaseResult, 2)
+	start := make(chan struct{})
+	for i := range messages {
+		workerID := fmt.Sprintf("duplicate-worker-%d", i+1)
+		go func() {
+			<-start
+			task, leaseErr := store.LeaseTask(ctx, taskID, workerID, time.Minute)
+			results <- leaseResult{workerID: workerID, task: task, err: leaseErr}
+		}()
+	}
+	close(start)
+	var winner, loser leaseResult
+	for range messages {
+		result := <-results
+		switch {
+		case result.err == nil:
+			if winner.workerID != "" {
+				t.Fatalf("multiple workers leased duplicate dispatch: first=%+v second=%+v", winner, result)
+			}
+			winner = result
+		case errors.Is(result.err, storage.ErrLeaseLost):
+			loser = result
+		default:
+			t.Fatalf("unexpected lease result: %+v", result)
+		}
+	}
+	if winner.workerID == "" || loser.workerID == "" || winner.task.AttemptCount != 1 {
+		t.Fatalf("duplicate dispatch results: winner=%+v loser=%+v", winner, loser)
+	}
+	var attemptCount, attemptRows int
+	if err = store.Pool.QueryRow(ctx, `SELECT attempt_count,(SELECT count(*) FROM task_attempts WHERE task_run_id=$1) FROM task_runs WHERE id=$1`, taskID).Scan(&attemptCount, &attemptRows); err != nil {
+		t.Fatal(err)
+	}
+	if attemptCount != 1 || attemptRows != 1 {
+		t.Fatalf("duplicate delivery created attempts: task_count=%d rows=%d", attemptCount, attemptRows)
+	}
+	if _, err = store.StartTask(ctx, taskID, winner.workerID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = store.StartTask(ctx, taskID, loser.workerID); !errors.Is(err, storage.ErrLeaseLost) {
+		t.Fatalf("losing worker start error=%v, want ErrLeaseLost", err)
+	}
+	if _, err = store.CompleteTask(ctx, taskID, loser.workerID, json.RawMessage(`{"duplicate":true}`), ""); !errors.Is(err, storage.ErrLeaseLost) {
+		t.Fatalf("losing worker completion error=%v, want ErrLeaseLost", err)
+	}
+	if _, err = store.CompleteTask(ctx, taskID, winner.workerID, json.RawMessage(`{"duplicate":false}`), ""); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = store.CompleteTask(ctx, taskID, winner.workerID, json.RawMessage(`{"duplicate":true}`), ""); !errors.Is(err, storage.ErrLeaseLost) {
+		t.Fatalf("duplicate completion error=%v, want ErrLeaseLost", err)
+	}
+	if err = reader.CommitMessages(ctx, messages...); err != nil {
+		t.Fatal(err)
+	}
+	completed, err := store.GetRun(ctx, tenantID, run.ID)
+	if err != nil || completed.Status != "SUCCEEDED" || completed.Tasks[0].Status != "SUCCEEDED" {
+		t.Fatalf("deduplicated workflow did not succeed: run=%+v err=%v", completed, err)
+	}
+	assertAttempt(t, ctx, store, taskID, 1, winner.workerID, "SUCCEEDED", "")
+	assertOutboxEvent(t, ctx, store, taskID, "task.leased")
+	assertOutboxEvent(t, ctx, store, taskID, "task.succeeded")
 }
 
 func TestRetryExhaustionAndDeadLetterReplay(t *testing.T) {
@@ -394,6 +526,32 @@ func postgresStore(t *testing.T, ctx context.Context) *storage.Store {
 	}
 	t.Cleanup(store.Close)
 	return store
+}
+
+func redpandaBroker(t *testing.T, ctx context.Context) string {
+	t.Helper()
+	container, err := redpanda.Run(ctx, "redpandadata/redpanda:v24.3.15", redpanda.WithAutoCreateTopics())
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = testcontainers.TerminateContainer(container) })
+	broker, err := container.KafkaSeedBroker(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return broker
+}
+
+func createTopic(t *testing.T, ctx context.Context, broker, topic string) {
+	t.Helper()
+	connection, err := kafka.DialContext(ctx, "tcp", broker)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer connection.Close()
+	if err = connection.CreateTopics(kafka.TopicConfig{Topic: topic, NumPartitions: 1, ReplicationFactor: 1}); err != nil {
+		t.Fatal(err)
+	}
 }
 
 func start(t *testing.T, ctx context.Context, request testcontainers.ContainerRequest) testcontainers.Container {
