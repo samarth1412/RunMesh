@@ -303,11 +303,11 @@ class Worker:
         *,
         trace_parent: str | None = None,
     ) -> JSON:
-        body = {"worker_id": self.worker_id, **payload}
         if "/tasks/" in path:
+            body = {"worker_id": self.worker_id, **payload}
             return await self._task_rpc(path, body, trace_parent)
         headers = {"traceparent": trace_parent} if trace_parent else None
-        async with session.post(self.base_url + path, json=body, headers=headers) as response:
+        async with session.post(self.base_url + path, json=payload, headers=headers) as response:
             if response.status == 409:
                 raise Conflict(await response.text())
             response.raise_for_status()
