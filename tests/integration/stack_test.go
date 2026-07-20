@@ -93,6 +93,128 @@ func TestPostgresIdempotencyAndConcurrentClaims(t *testing.T) {
 	}
 }
 
+func TestPostgresRestartPreservesWorkflowAndPoolRecovery(t *testing.T) {
+	ctx := context.Background()
+	container, store := restartablePostgresStore(t, ctx)
+	tenantID := "00000000-0000-0000-0000-000000000001"
+	userID := "00000000-0000-0000-0000-000000000001"
+	dag := workflow.DAG{Tasks: map[string]workflow.TaskSpec{
+		"active":     {Handler: "test.active"},
+		"downstream": {Handler: "test.downstream", DependsOn: []string{"active"}},
+	}}
+	definition, err := store.CreateWorkflow(ctx, tenantID, userID, "postgres-restart", dag)
+	if err != nil {
+		t.Fatal(err)
+	}
+	run, created, err := store.CreateRun(ctx, tenantID, userID, definition.ID, "postgres-restart", json.RawMessage(`{"value":1}`))
+	if err != nil || !created {
+		t.Fatalf("create run: created=%v err=%v", created, err)
+	}
+	service := scheduler.Service{Store: store}
+	if err = service.RunOnce(ctx); err != nil {
+		t.Fatal(err)
+	}
+	run, err = store.GetRun(ctx, tenantID, run.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	activeID := taskByKey(t, run, "active").ID
+	downstreamID := taskByKey(t, run, "downstream").ID
+	if _, err = store.LeaseTask(ctx, activeID, "worker-before-restart", 2*time.Minute); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = store.StartTask(ctx, activeID, "worker-before-restart"); err != nil {
+		t.Fatal(err)
+	}
+
+	exitCode, _, err := container.Exec(ctx, []string{"sh", "-c", `touch /tmp/runmesh-hold-postgres && kill -INT "$(head -n 1 "${PGDATA:-/var/lib/postgresql/data}/postmaster.pid")"`})
+	if err != nil || exitCode != 0 {
+		t.Fatalf("stop PostgreSQL process: exit=%d err=%v", exitCode, err)
+	}
+	outageDeadline := time.Now().Add(10 * time.Second)
+	for {
+		downContext, cancelDown := context.WithTimeout(ctx, 250*time.Millisecond)
+		pingErr := store.Ping(downContext)
+		cancelDown()
+		if pingErr != nil {
+			break
+		}
+		if time.Now().After(outageDeadline) {
+			t.Fatal("PostgreSQL process did not stop before the outage deadline")
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	downSchedulerContext, cancelDownScheduler := context.WithTimeout(ctx, 2*time.Second)
+	if schedulerErr := service.RunOnce(downSchedulerContext); schedulerErr == nil {
+		cancelDownScheduler()
+		t.Fatal("scheduler cycle succeeded while PostgreSQL was stopped")
+	}
+	cancelDownScheduler()
+
+	exitCode, _, err = container.Exec(ctx, []string{"sh", "-c", "rm -f /tmp/runmesh-hold-postgres"})
+	if err != nil || exitCode != 0 {
+		t.Fatalf("restart PostgreSQL process: exit=%d err=%v", exitCode, err)
+	}
+	recoveryContext, cancelRecovery := context.WithTimeout(ctx, 30*time.Second)
+	defer cancelRecovery()
+	for {
+		err = store.Ping(recoveryContext)
+		if err == nil {
+			break
+		}
+		select {
+		case <-recoveryContext.Done():
+			t.Fatalf("existing PostgreSQL pool did not recover: last error: %v", err)
+		case <-time.After(100 * time.Millisecond):
+		}
+	}
+
+	recovered, err := store.GetRun(ctx, tenantID, run.ID)
+	if err != nil || recovered.Status != "RUNNING" {
+		t.Fatalf("recover run after restart: run=%+v err=%v", recovered, err)
+	}
+	active := taskByKey(t, recovered, "active")
+	downstream := taskByKey(t, recovered, "downstream")
+	if active.Status != "RUNNING" || active.LeaseOwner == nil || *active.LeaseOwner != "worker-before-restart" || downstream.Status != "BLOCKED" {
+		t.Fatalf("durable task state changed across restart: active=%+v downstream=%+v", active, downstream)
+	}
+	duplicate, created, err := store.CreateRun(ctx, tenantID, userID, definition.ID, "postgres-restart", json.RawMessage(`{"value":2}`))
+	if err != nil || created || duplicate.ID != run.ID {
+		t.Fatalf("idempotency after restart: original=%s duplicate=%s created=%v err=%v", run.ID, duplicate.ID, created, err)
+	}
+	if _, cancelled, heartbeatErr := store.HeartbeatTask(ctx, activeID, "worker-before-restart", time.Minute); heartbeatErr != nil || cancelled {
+		t.Fatalf("heartbeat after restart: cancelled=%v err=%v", cancelled, heartbeatErr)
+	}
+	if _, err = store.CompleteTask(ctx, activeID, "worker-before-restart", json.RawMessage(`{"recovered":true}`), ""); err != nil {
+		t.Fatal(err)
+	}
+	if err = service.RunOnce(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = store.LeaseTask(ctx, downstreamID, "worker-after-restart", time.Minute); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = store.StartTask(ctx, downstreamID, "worker-after-restart"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = store.CompleteTask(ctx, downstreamID, "worker-after-restart", json.RawMessage(`{"finished":true}`), ""); err != nil {
+		t.Fatal(err)
+	}
+	completed, err := store.GetRun(ctx, tenantID, run.ID)
+	if err != nil || completed.Status != "SUCCEEDED" {
+		t.Fatalf("workflow did not finish after PostgreSQL recovery: run=%+v err=%v", completed, err)
+	}
+	for _, task := range completed.Tasks {
+		if task.Status != "SUCCEEDED" {
+			t.Fatalf("task %q did not finish after PostgreSQL recovery: %+v", task.TaskKey, task)
+		}
+	}
+	assertAttempt(t, ctx, store, activeID, 1, "worker-before-restart", "SUCCEEDED", "")
+	assertAttempt(t, ctx, store, downstreamID, 1, "worker-after-restart", "SUCCEEDED", "")
+	assertOutboxEvent(t, ctx, store, activeID, "task.succeeded")
+	assertOutboxEvent(t, ctx, store, downstreamID, "task.succeeded")
+}
+
 func TestRedisRedpandaAndMinIOContainers(t *testing.T) {
 	ctx := context.Background()
 	requests := []testcontainers.ContainerRequest{
@@ -808,11 +930,39 @@ func assertOutboxEvent(t *testing.T, ctx context.Context, store *storage.Store, 
 
 func postgresStore(t *testing.T, ctx context.Context) *storage.Store {
 	t.Helper()
-	container := start(t, ctx, testcontainers.ContainerRequest{
+	_, store := postgresStoreContainer(t, ctx)
+	return store
+}
+
+func postgresStoreContainer(t *testing.T, ctx context.Context) (testcontainers.Container, *storage.Store) {
+	t.Helper()
+	return postgresStoreFromRequest(t, ctx, testcontainers.ContainerRequest{
 		Image: "postgres:17-alpine", ExposedPorts: []string{"5432/tcp"},
 		Env:        map[string]string{"POSTGRES_DB": "runmesh", "POSTGRES_USER": "runmesh", "POSTGRES_PASSWORD": "runmesh"},
 		WaitingFor: wait.ForLog("database system is ready to accept connections").WithOccurrence(2).WithStartupTimeout(time.Minute),
 	})
+}
+
+func restartablePostgresStore(t *testing.T, ctx context.Context) (testcontainers.Container, *storage.Store) {
+	t.Helper()
+	return postgresStoreFromRequest(t, ctx, testcontainers.ContainerRequest{
+		Image: "postgres:17-alpine", ExposedPorts: []string{"5432/tcp"},
+		Env:        map[string]string{"POSTGRES_DB": "runmesh", "POSTGRES_USER": "runmesh", "POSTGRES_PASSWORD": "runmesh"},
+		Entrypoint: []string{"sh", "-c"},
+		Cmd: []string{`trap 'kill -TERM "$child" 2>/dev/null; wait "$child"; exit 0' TERM INT
+while true; do
+  while [ -f /tmp/runmesh-hold-postgres ]; do sleep 0.1; done
+  /usr/local/bin/docker-entrypoint.sh postgres &
+  child=$!
+  wait "$child"
+done`},
+		WaitingFor: wait.ForLog("database system is ready to accept connections").WithOccurrence(2).WithStartupTimeout(time.Minute),
+	})
+}
+
+func postgresStoreFromRequest(t *testing.T, ctx context.Context, request testcontainers.ContainerRequest) (testcontainers.Container, *storage.Store) {
+	t.Helper()
+	container := start(t, ctx, request)
 	host, _ := container.Host(ctx)
 	port, _ := container.MappedPort(ctx, "5432/tcp")
 	databaseURL := fmt.Sprintf("postgres://runmesh:runmesh@%s:%s/runmesh?sslmode=disable", host, port.Port())
@@ -822,7 +972,7 @@ func postgresStore(t *testing.T, ctx context.Context) *storage.Store {
 		t.Fatal(err)
 	}
 	t.Cleanup(store.Close)
-	return store
+	return container, store
 }
 
 func redpandaBroker(t *testing.T, ctx context.Context) string {
