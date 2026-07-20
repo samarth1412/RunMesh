@@ -48,12 +48,31 @@ func (s *Store) LeaseTask(ctx context.Context, taskID, workerID string, lease ti
 }
 
 func (s *Store) StartTask(ctx context.Context, taskID, workerID string) (workflow.TaskRun, error) {
+	tx, err := s.Pool.Begin(ctx)
+	if err != nil {
+		return workflow.TaskRun{}, err
+	}
+	defer tx.Rollback(ctx)
+	var runStatus string
+	err = tx.QueryRow(ctx, `SELECT r.status::text FROM task_runs t JOIN workflow_runs r ON r.id=t.workflow_run_id WHERE t.id=$1 AND t.status='LEASED' AND t.lease_owner=$2 AND t.lease_expires_at>now() FOR UPDATE OF r,t`, taskID, workerID).Scan(&runStatus)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return workflow.TaskRun{}, ErrLeaseLost
+	}
+	if err != nil {
+		return workflow.TaskRun{}, err
+	}
+	if runStatus != "RUNNING" {
+		return workflow.TaskRun{}, ErrLeaseLost
+	}
 	var t workflow.TaskRun
-	err := s.Pool.QueryRow(ctx, `UPDATE task_runs SET status='RUNNING',updated_at=now() WHERE id=$1 AND status='LEASED' AND lease_owner=$2 AND lease_expires_at>now() RETURNING id,workflow_run_id,task_key,handler,status,priority,available_at,attempt_count,maximum_attempts,timeout_seconds,lease_owner,lease_expires_at,input,output,output_artifact_uri`, taskID, workerID).Scan(&t.ID, &t.WorkflowRunID, &t.TaskKey, &t.Handler, &t.Status, &t.Priority, &t.AvailableAt, &t.AttemptCount, &t.MaximumAttempts, &t.TimeoutSeconds, &t.LeaseOwner, &t.LeaseExpiresAt, &t.Input, &t.Output, &t.OutputArtifactURI)
+	err = tx.QueryRow(ctx, `UPDATE task_runs SET status='RUNNING',updated_at=now() WHERE id=$1 AND status='LEASED' AND lease_owner=$2 AND lease_expires_at>now() RETURNING id,workflow_run_id,task_key,handler,status,priority,available_at,attempt_count,maximum_attempts,timeout_seconds,lease_owner,lease_expires_at,input,output,output_artifact_uri`, taskID, workerID).Scan(&t.ID, &t.WorkflowRunID, &t.TaskKey, &t.Handler, &t.Status, &t.Priority, &t.AvailableAt, &t.AttemptCount, &t.MaximumAttempts, &t.TimeoutSeconds, &t.LeaseOwner, &t.LeaseExpiresAt, &t.Input, &t.Output, &t.OutputArtifactURI)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return t, ErrLeaseLost
 	}
-	return t, err
+	if err != nil {
+		return t, err
+	}
+	return t, tx.Commit(ctx)
 }
 
 func (s *Store) HeartbeatTask(ctx context.Context, taskID, workerID string, lease time.Duration) (time.Time, bool, error) {
@@ -75,6 +94,17 @@ func (s *Store) CompleteTask(ctx context.Context, taskID, workerID string, outpu
 		return workflow.TaskRun{}, err
 	}
 	defer tx.Rollback(ctx)
+	var runStatus string
+	err = tx.QueryRow(ctx, `SELECT r.status::text FROM task_runs t JOIN workflow_runs r ON r.id=t.workflow_run_id WHERE t.id=$1 AND t.status='RUNNING' AND t.lease_owner=$2 AND t.lease_expires_at>now() FOR UPDATE OF r,t`, taskID, workerID).Scan(&runStatus)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return workflow.TaskRun{}, ErrLeaseLost
+	}
+	if err != nil {
+		return workflow.TaskRun{}, err
+	}
+	if runStatus != "RUNNING" {
+		return workflow.TaskRun{}, ErrLeaseLost
+	}
 	var t workflow.TaskRun
 	err = tx.QueryRow(ctx, `UPDATE task_runs SET status='SUCCEEDED',output=$3,output_artifact_uri=NULLIF($4,''),lease_expires_at=NULL,updated_at=now() WHERE id=$1 AND status='RUNNING' AND lease_owner=$2 AND lease_expires_at>now() RETURNING id,workflow_run_id,task_key,handler,status,priority,available_at,attempt_count,maximum_attempts,timeout_seconds,lease_owner,lease_expires_at,input,output,output_artifact_uri`, taskID, workerID, output, artifactURI).Scan(&t.ID, &t.WorkflowRunID, &t.TaskKey, &t.Handler, &t.Status, &t.Priority, &t.AvailableAt, &t.AttemptCount, &t.MaximumAttempts, &t.TimeoutSeconds, &t.LeaseOwner, &t.LeaseExpiresAt, &t.Input, &t.Output, &t.OutputArtifactURI)
 	if errors.Is(err, pgx.ErrNoRows) {

@@ -312,6 +312,156 @@ func TestDuplicateDispatchIsLeasedOnce(t *testing.T) {
 	assertOutboxEvent(t, ctx, store, taskID, "task.succeeded")
 }
 
+func TestRunCancellationFencesWorkers(t *testing.T) {
+	ctx := context.Background()
+	store := postgresStore(t, ctx)
+	tenantID := "00000000-0000-0000-0000-000000000001"
+	userID := "00000000-0000-0000-0000-000000000001"
+	service := scheduler.Service{Store: store}
+
+	t.Run("leased and running workers observe cancellation", func(t *testing.T) {
+		dag := workflow.DAG{Tasks: map[string]workflow.TaskSpec{
+			"running":    {Handler: "test.running"},
+			"leased":     {Handler: "test.leased"},
+			"downstream": {Handler: "test.downstream", DependsOn: []string{"running"}},
+		}}
+		definition, err := store.CreateWorkflow(ctx, tenantID, userID, "cancellation", dag)
+		if err != nil {
+			t.Fatal(err)
+		}
+		run, created, err := store.CreateRun(ctx, tenantID, userID, definition.ID, "cancellation", json.RawMessage(`{"value":1}`))
+		if err != nil || !created {
+			t.Fatalf("create run: created=%v err=%v", created, err)
+		}
+		if err = service.RunOnce(ctx); err != nil {
+			t.Fatal(err)
+		}
+		run, err = store.GetRun(ctx, tenantID, run.ID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		runningID := taskByKey(t, run, "running").ID
+		leasedID := taskByKey(t, run, "leased").ID
+		downstreamID := taskByKey(t, run, "downstream").ID
+		if _, err = store.LeaseTask(ctx, runningID, "worker-running", time.Minute); err != nil {
+			t.Fatal(err)
+		}
+		if _, err = store.StartTask(ctx, runningID, "worker-running"); err != nil {
+			t.Fatal(err)
+		}
+		if _, err = store.LeaseTask(ctx, leasedID, "worker-leased", time.Minute); err != nil {
+			t.Fatal(err)
+		}
+
+		if err = store.CancelRun(ctx, tenantID, userID, run.ID); err != nil {
+			t.Fatal(err)
+		}
+		if _, cancelled, heartbeatErr := store.HeartbeatTask(ctx, runningID, "worker-running", time.Minute); heartbeatErr != nil || !cancelled {
+			t.Fatalf("running heartbeat: cancelled=%v err=%v", cancelled, heartbeatErr)
+		}
+		if _, cancelled, heartbeatErr := store.HeartbeatTask(ctx, leasedID, "worker-leased", time.Minute); heartbeatErr != nil || !cancelled {
+			t.Fatalf("leased heartbeat: cancelled=%v err=%v", cancelled, heartbeatErr)
+		}
+		if _, err = store.StartTask(ctx, leasedID, "worker-leased"); !errors.Is(err, storage.ErrLeaseLost) {
+			t.Fatalf("start after cancellation error=%v, want ErrLeaseLost", err)
+		}
+		if _, err = store.CompleteTask(ctx, runningID, "worker-running", json.RawMessage(`{"late":true}`), ""); !errors.Is(err, storage.ErrLeaseLost) {
+			t.Fatalf("completion after cancellation error=%v, want ErrLeaseLost", err)
+		}
+		cancelFailure := storage.Failure{Retryable: true, ErrorType: "RunCancelled", ErrorMessage: "workflow run was cancelled"}
+		if task, failErr := store.FailTask(ctx, runningID, "worker-running", cancelFailure); failErr != nil || task.Status != "CANCELLED" {
+			t.Fatalf("cancel running task: task=%+v err=%v", task, failErr)
+		}
+		if task, failErr := store.FailTask(ctx, leasedID, "worker-leased", cancelFailure); failErr != nil || task.Status != "CANCELLED" {
+			t.Fatalf("cancel leased task: task=%+v err=%v", task, failErr)
+		}
+
+		cancelledRun, err := store.GetRun(ctx, tenantID, run.ID)
+		if err != nil || cancelledRun.Status != "CANCELLED" {
+			t.Fatalf("cancelled run: run=%+v err=%v", cancelledRun, err)
+		}
+		for _, task := range cancelledRun.Tasks {
+			if task.Status != "CANCELLED" {
+				t.Fatalf("task %q survived cancellation: %+v", task.TaskKey, task)
+			}
+		}
+		assertAttempt(t, ctx, store, runningID, 1, "worker-running", "CANCELLED", "RunCancelled")
+		assertAttempt(t, ctx, store, leasedID, 1, "worker-leased", "CANCELLED", "RunCancelled")
+		assertOutboxEvent(t, ctx, store, runningID, "task.cancelled")
+		assertOutboxEvent(t, ctx, store, leasedID, "task.cancelled")
+		var auditCount, successCount, downstreamDispatches int
+		if err = store.Pool.QueryRow(ctx, `SELECT count(*) FROM audit_events WHERE resource_id=$1 AND action='run.cancel'`, run.ID).Scan(&auditCount); err != nil {
+			t.Fatal(err)
+		}
+		if err = store.Pool.QueryRow(ctx, `SELECT count(*) FROM outbox_events WHERE aggregate_id IN ($1,$2) AND event_type='task.succeeded'`, runningID, leasedID).Scan(&successCount); err != nil {
+			t.Fatal(err)
+		}
+		if err = store.Pool.QueryRow(ctx, `SELECT count(*) FROM outbox_events WHERE aggregate_id=$1 AND event_type='task.dispatch'`, downstreamID).Scan(&downstreamDispatches); err != nil {
+			t.Fatal(err)
+		}
+		if auditCount != 1 || successCount != 0 || downstreamDispatches != 0 {
+			t.Fatalf("cancellation side effects: audits=%d successes=%d downstream_dispatches=%d", auditCount, successCount, downstreamDispatches)
+		}
+	})
+
+	t.Run("concurrent cancellation wins before completion", func(t *testing.T) {
+		dag := workflow.DAG{Tasks: map[string]workflow.TaskSpec{
+			"racing": {Handler: "test.racing"},
+		}}
+		definition, err := store.CreateWorkflow(ctx, tenantID, userID, "cancellation-race", dag)
+		if err != nil {
+			t.Fatal(err)
+		}
+		run, created, err := store.CreateRun(ctx, tenantID, userID, definition.ID, "cancellation-race", json.RawMessage(`{}`))
+		if err != nil || !created {
+			t.Fatalf("create run: created=%v err=%v", created, err)
+		}
+		if err = service.RunOnce(ctx); err != nil {
+			t.Fatal(err)
+		}
+		run, err = store.GetRun(ctx, tenantID, run.ID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		taskID := taskByKey(t, run, "racing").ID
+		if _, err = store.LeaseTask(ctx, taskID, "worker-racing", time.Minute); err != nil {
+			t.Fatal(err)
+		}
+		if _, err = store.StartTask(ctx, taskID, "worker-racing"); err != nil {
+			t.Fatal(err)
+		}
+
+		cancelTx, err := store.Pool.Begin(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer cancelTx.Rollback(ctx)
+		if _, err = cancelTx.Exec(ctx, `UPDATE workflow_runs SET status='CANCELLED',completed_at=now() WHERE id=$1`, run.ID); err != nil {
+			t.Fatal(err)
+		}
+		completion := make(chan error, 1)
+		go func() {
+			_, completionErr := store.CompleteTask(ctx, taskID, "worker-racing", json.RawMessage(`{"late":true}`), "")
+			completion <- completionErr
+		}()
+		select {
+		case completionErr := <-completion:
+			t.Fatalf("completion bypassed the in-flight cancellation lock: %v", completionErr)
+		case <-time.After(200 * time.Millisecond):
+		}
+		if err = cancelTx.Commit(ctx); err != nil {
+			t.Fatal(err)
+		}
+		if completionErr := <-completion; !errors.Is(completionErr, storage.ErrLeaseLost) {
+			t.Fatalf("concurrent completion error=%v, want ErrLeaseLost", completionErr)
+		}
+		if task, failErr := store.FailTask(ctx, taskID, "worker-racing", storage.Failure{Retryable: true, ErrorType: "RunCancelled", ErrorMessage: "workflow run was cancelled"}); failErr != nil || task.Status != "CANCELLED" {
+			t.Fatalf("finish concurrent cancellation: task=%+v err=%v", task, failErr)
+		}
+		assertAttempt(t, ctx, store, taskID, 1, "worker-racing", "CANCELLED", "RunCancelled")
+	})
+}
+
 func TestRetryExhaustionAndDeadLetterReplay(t *testing.T) {
 	ctx := context.Background()
 	store := postgresStore(t, ctx)
