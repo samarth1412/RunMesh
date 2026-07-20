@@ -3,6 +3,7 @@ module github.com/runmesh/runmesh
 go 1.25.0
 
 require (
+	github.com/Shopify/toxiproxy/v2 v2.12.0
 	github.com/google/uuid v1.6.0
 	github.com/jackc/pgx/v5 v5.7.5
 	github.com/prometheus/client_golang v1.22.0
@@ -10,6 +11,7 @@ require (
 	github.com/segmentio/kafka-go v0.4.48
 	github.com/testcontainers/testcontainers-go v0.37.0
 	github.com/testcontainers/testcontainers-go/modules/redpanda v0.37.0
+	github.com/testcontainers/testcontainers-go/modules/toxiproxy v0.37.0
 	go.opentelemetry.io/contrib/instrumentation/google.golang.org/grpc/otelgrpc v0.69.0
 	go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp v0.49.0
 	go.opentelemetry.io/otel v1.44.0

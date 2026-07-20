@@ -7,12 +7,14 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net"
 	"os"
 	"path/filepath"
 	"sync"
 	"testing"
 	"time"
 
+	toxiproxyclient "github.com/Shopify/toxiproxy/v2/client"
 	"github.com/jackc/pgx/v5"
 	"github.com/runmesh/runmesh/internal/messaging"
 	"github.com/runmesh/runmesh/internal/scheduler"
@@ -21,6 +23,7 @@ import (
 	"github.com/segmentio/kafka-go"
 	"github.com/testcontainers/testcontainers-go"
 	"github.com/testcontainers/testcontainers-go/modules/redpanda"
+	tctoxiproxy "github.com/testcontainers/testcontainers-go/modules/toxiproxy"
 	"github.com/testcontainers/testcontainers-go/wait"
 )
 
@@ -581,6 +584,151 @@ func TestTransactionalOutboxRecoversAfterBrokerOutage(t *testing.T) {
 	}
 }
 
+func TestTransactionalOutboxRecoversAfterKafkaLatency(t *testing.T) {
+	ctx := context.Background()
+	store := postgresStore(t, ctx)
+	container, broker := redpandaContainer(t, ctx)
+	topic := "outbox-proxy-recovery"
+	createTopic(t, ctx, broker, topic)
+	proxyAddress, proxy := kafkaProxy(t, ctx, container)
+
+	dialer := &net.Dialer{Timeout: 2 * time.Second}
+	transport := &kafka.Transport{
+		Dial: func(dialContext context.Context, network, _ string) (net.Conn, error) {
+			return dialer.DialContext(dialContext, network, proxyAddress)
+		},
+		DialTimeout: 2 * time.Second,
+	}
+	publisher := messaging.NewPublisher([]string{broker}, topic, messaging.WithTransport(transport))
+	t.Cleanup(func() { _ = publisher.Close() })
+	service := scheduler.Service{Store: store, Publisher: publisher}
+	tenantID := "00000000-0000-0000-0000-000000000001"
+	userID := "00000000-0000-0000-0000-000000000001"
+	dag := workflow.DAG{Tasks: map[string]workflow.TaskSpec{
+		"durable": {Handler: "test.durable"},
+	}}
+	definition, err := store.CreateWorkflow(ctx, tenantID, userID, "outbox-proxy-recovery", dag)
+	if err != nil {
+		t.Fatal(err)
+	}
+	run, created, err := store.CreateRun(ctx, tenantID, userID, definition.ID, "outbox-proxy-recovery", json.RawMessage(`{"value":1}`))
+	if err != nil || !created {
+		t.Fatalf("create run: created=%v err=%v", created, err)
+	}
+	if err = service.RunOnce(ctx); err != nil {
+		t.Fatal(err)
+	}
+	run, err = store.GetRun(ctx, tenantID, run.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	taskID := taskByKey(t, run, "durable").ID
+	if taskByKey(t, run, "durable").Status != "DISPATCHING" {
+		t.Fatalf("task state was not committed before publication: %+v", run.Tasks)
+	}
+
+	type outboxEvent struct {
+		id, eventType string
+	}
+	rows, err := store.Pool.Query(ctx, `SELECT id,event_type FROM outbox_events WHERE aggregate_id IN ($1,$2) AND published_at IS NULL ORDER BY created_at,id`, run.ID, taskID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var pending []outboxEvent
+	for rows.Next() {
+		var event outboxEvent
+		if err = rows.Scan(&event.id, &event.eventType); err != nil {
+			rows.Close()
+			t.Fatal(err)
+		}
+		pending = append(pending, event)
+	}
+	rows.Close()
+	if err = rows.Err(); err != nil {
+		t.Fatal(err)
+	}
+	if len(pending) != 2 {
+		t.Fatalf("pending outbox events=%+v, want workflow creation and task dispatch", pending)
+	}
+
+	if _, err = proxy.AddToxic("kafka-latency", "latency", "downstream", 1, toxiproxyclient.Attributes{"latency": 5000, "jitter": 0}); err != nil {
+		t.Fatal(err)
+	}
+	latencyContext, cancelLatency := context.WithTimeout(ctx, 750*time.Millisecond)
+	err = service.PublishOnce(latencyContext)
+	cancelLatency()
+	if err == nil {
+		t.Fatal("outbox publication succeeded through five seconds of Kafka latency")
+	}
+	var unpublished int
+	if err = store.Pool.QueryRow(ctx, `SELECT count(*) FROM outbox_events WHERE id IN ($1,$2) AND published_at IS NULL`, pending[0].id, pending[1].id).Scan(&unpublished); err != nil {
+		t.Fatal(err)
+	}
+	if unpublished != len(pending) {
+		t.Fatalf("Kafka latency marked durable events published: unpublished=%d want=%d", unpublished, len(pending))
+	}
+	committed, err := store.GetRun(ctx, tenantID, run.ID)
+	if err != nil || taskByKey(t, committed, "durable").Status != "DISPATCHING" {
+		t.Fatalf("Kafka latency changed authoritative workflow state: run=%+v err=%v", committed, err)
+	}
+
+	if err = proxy.RemoveToxic("kafka-latency"); err != nil {
+		t.Fatal(err)
+	}
+	transport.CloseIdleConnections()
+	recoveryContext, cancelRecovery := context.WithTimeout(ctx, 30*time.Second)
+	defer cancelRecovery()
+	for {
+		err = service.PublishOnce(recoveryContext)
+		if err == nil {
+			break
+		}
+		select {
+		case <-recoveryContext.Done():
+			t.Fatalf("outbox did not recover before deadline: last error: %v", err)
+		case <-time.After(100 * time.Millisecond):
+		}
+	}
+	if err = store.Pool.QueryRow(ctx, `SELECT count(*) FROM outbox_events WHERE id IN ($1,$2) AND published_at IS NULL`, pending[0].id, pending[1].id).Scan(&unpublished); err != nil {
+		t.Fatal(err)
+	}
+	if unpublished != 0 {
+		t.Fatalf("outbox backlog did not drain after Kafka latency cleared: unpublished=%d", unpublished)
+	}
+
+	reader := kafka.NewReader(kafka.ReaderConfig{Brokers: []string{broker}, Topic: topic, Partition: 0, MinBytes: 1, MaxBytes: 1e6, StartOffset: kafka.FirstOffset})
+	t.Cleanup(func() { _ = reader.Close() })
+	readContext, cancelRead := context.WithTimeout(ctx, 10*time.Second)
+	defer cancelRead()
+	want := make(map[string]string, len(pending))
+	for _, event := range pending {
+		want[event.id] = event.eventType
+	}
+	for range pending {
+		message, readErr := reader.FetchMessage(readContext)
+		if readErr != nil {
+			t.Fatal(readErr)
+		}
+		eventID := headerValue(message.Headers, "event_id")
+		eventType := headerValue(message.Headers, "event_type")
+		if string(message.Key) != run.ID || want[eventID] != eventType {
+			t.Fatalf("recovered message: key=%q event_id=%q event_type=%q", message.Key, eventID, eventType)
+		}
+		delete(want, eventID)
+	}
+	if len(want) != 0 {
+		t.Fatalf("outbox messages were not recovered: %+v", want)
+	}
+	if err = service.PublishOnce(ctx); err != nil {
+		t.Fatal(err)
+	}
+	noDuplicateContext, cancelNoDuplicate := context.WithTimeout(ctx, 500*time.Millisecond)
+	defer cancelNoDuplicate()
+	if message, readErr := reader.FetchMessage(noDuplicateContext); !errors.Is(readErr, context.DeadlineExceeded) {
+		t.Fatalf("already-published events were sent again: message=%+v err=%v", message, readErr)
+	}
+}
+
 func TestRunCancellationFencesWorkers(t *testing.T) {
 	ctx := context.Background()
 	store := postgresStore(t, ctx)
@@ -993,6 +1141,32 @@ func redpandaContainer(t *testing.T, ctx context.Context) (*redpanda.Container, 
 		t.Fatal(err)
 	}
 	return container, broker
+}
+
+func kafkaProxy(t *testing.T, ctx context.Context, broker *redpanda.Container) (string, *toxiproxyclient.Proxy) {
+	t.Helper()
+	brokerIP, err := broker.ContainerIP(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	container, err := tctoxiproxy.Run(ctx, "ghcr.io/shopify/toxiproxy:2.12.0", tctoxiproxy.WithProxy("kafka", net.JoinHostPort(brokerIP, "9092")))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = testcontainers.TerminateContainer(container) })
+	host, port, err := container.ProxiedEndpoint(8666)
+	if err != nil {
+		t.Fatal(err)
+	}
+	uri, err := container.URI(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	proxy, err := toxiproxyclient.NewClient(uri).Proxy("kafka")
+	if err != nil {
+		t.Fatal(err)
+	}
+	return net.JoinHostPort(host, port), proxy
 }
 
 func createTopic(t *testing.T, ctx context.Context, broker, topic string) {
