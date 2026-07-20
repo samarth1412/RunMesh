@@ -15,6 +15,14 @@ cleanup() {
 }
 trap cleanup EXIT
 
+diagnostics() {
+  echo "kind upgrade diagnostics" >&2
+  kubectl -n "$namespace" get pods -o wide >&2 || true
+  kubectl -n "$namespace" get events --sort-by=.lastTimestamp >&2 || true
+  kubectl -n "$namespace" logs -l app.kubernetes.io/name=runmesh --all-containers --tail=100 --prefix >&2 || true
+}
+trap diagnostics ERR
+
 start_port_forward() {
   if [[ -n "$port_forward_pid" ]]; then
     kill "$port_forward_pid" 2>/dev/null || true

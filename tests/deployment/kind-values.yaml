@@ -4,7 +4,7 @@ images:
   web: {repository: runmesh/web, tag: rolling, pullPolicy: Never}
   workerGo: {repository: runmesh/worker-go, tag: rolling, pullPolicy: Never}
 
-replicas: {controlPlane: 2, scheduler: 2, web: 2}
+replicas: {controlPlane: 1, scheduler: 1, web: 1}
 
 config:
   devAuth: true
@@ -27,8 +27,8 @@ workerPools:
     autoscaling: {enabled: false, minReplicas: 2, maxReplicas: 2, targetCPUUtilizationPercentage: 70}
 
 autoscaling:
-  controlPlane: {enabled: false, minReplicas: 2, maxReplicas: 2, targetCPUUtilizationPercentage: 70}
-  scheduler: {enabled: false, minReplicas: 2, maxReplicas: 2, targetCPUUtilizationPercentage: 70}
-  web: {enabled: false, minReplicas: 2, maxReplicas: 2, targetCPUUtilizationPercentage: 70}
+  controlPlane: {enabled: false, minReplicas: 1, maxReplicas: 2, targetCPUUtilizationPercentage: 70}
+  scheduler: {enabled: false, minReplicas: 1, maxReplicas: 2, targetCPUUtilizationPercentage: 70}
+  web: {enabled: false, minReplicas: 1, maxReplicas: 2, targetCPUUtilizationPercentage: 70}
 pdb: {enabled: false, minAvailable: 1}
 networkPolicy: {enabled: false, ingressNamespace: ingress-nginx, monitoringNamespace: monitoring, externalPorts: []}
