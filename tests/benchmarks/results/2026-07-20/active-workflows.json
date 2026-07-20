@@ -1,0 +1,16 @@
+{
+  "create_p95_ms": 8.569,
+  "created": 1000,
+  "elapsed_seconds": 20.588,
+  "idempotency_prefix": "validation-active-20260720T054346Z",
+  "requested": 1000,
+  "sample_run_ids": [
+    "1eac2621-6df9-4a6a-8d8d-308040c7ef27",
+    "42ea56c6-3cb0-446e-82bb-61731d972b80",
+    "039c37c0-b03a-4f54-b775-ba6412d6ba93",
+    "30fbe760-d607-42dd-ae4b-82c8004f1e0d",
+    "612cf74b-43fc-4068-a43a-040c4176c460"
+  ],
+  "scenario": "simultaneously_active_workflows",
+  "workflow_id": "ee585032-552f-4405-bc84-f93ec2c731c9"
+}

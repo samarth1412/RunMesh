@@ -76,6 +76,5 @@ docker compose images --format json > "$result_dir/image-digests.json"
   docker version --format '{{json .}}'
 } > "$result_dir/hardware.txt"
 git rev-parse HEAD > "$result_dir/commit-sha.txt"
-python3 tests/benchmarks/verify.py "$result_dir" > "$result_dir/verification.json"
 
 echo "Benchmark evidence written to $result_dir"

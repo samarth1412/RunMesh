@@ -1,0 +1,8 @@
+{"Time":"2026-07-20T05:52:11.200526179Z","Action":"start","Package":"github.com/runmesh/runmesh/tests/integration"}
+{"Time":"2026-07-20T05:52:11.213790096Z","Action":"run","Package":"github.com/runmesh/runmesh/tests/integration","Test":"TestDuplicateDispatchIsLeasedOnce"}
+{"Time":"2026-07-20T05:52:11.213882471Z","Action":"output","Package":"github.com/runmesh/runmesh/tests/integration","Test":"TestDuplicateDispatchIsLeasedOnce","Output":"=== RUN   TestDuplicateDispatchIsLeasedOnce\n"}
+{"Time":"2026-07-20T05:52:27.633120964Z","Action":"output","Package":"github.com/runmesh/runmesh/tests/integration","Test":"TestDuplicateDispatchIsLeasedOnce","Output":"--- PASS: TestDuplicateDispatchIsLeasedOnce (16.42s)\n"}
+{"Time":"2026-07-20T05:52:27.633447131Z","Action":"pass","Package":"github.com/runmesh/runmesh/tests/integration","Test":"TestDuplicateDispatchIsLeasedOnce","Elapsed":16.42}
+{"Time":"2026-07-20T05:52:27.633469714Z","Action":"output","Package":"github.com/runmesh/runmesh/tests/integration","Output":"PASS\n"}
+{"Time":"2026-07-20T05:52:27.634553381Z","Action":"output","Package":"github.com/runmesh/runmesh/tests/integration","Output":"ok  \tgithub.com/runmesh/runmesh/tests/integration\t16.433s\n"}
+{"Time":"2026-07-20T05:52:27.634596214Z","Action":"pass","Package":"github.com/runmesh/runmesh/tests/integration","Elapsed":16.433}
