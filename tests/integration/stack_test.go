@@ -23,20 +23,7 @@ import (
 
 func TestPostgresIdempotencyAndConcurrentClaims(t *testing.T) {
 	ctx := context.Background()
-	container := start(t, ctx, testcontainers.ContainerRequest{
-		Image: "postgres:17-alpine", ExposedPorts: []string{"5432/tcp"},
-		Env:        map[string]string{"POSTGRES_DB": "runmesh", "POSTGRES_USER": "runmesh", "POSTGRES_PASSWORD": "runmesh"},
-		WaitingFor: wait.ForLog("database system is ready to accept connections").WithOccurrence(2).WithStartupTimeout(time.Minute),
-	})
-	host, _ := container.Host(ctx)
-	port, _ := container.MappedPort(ctx, "5432/tcp")
-	databaseURL := fmt.Sprintf("postgres://runmesh:runmesh@%s:%s/runmesh?sslmode=disable", host, port.Port())
-	applyMigrations(t, ctx, databaseURL)
-	store, err := storage.New(ctx, databaseURL)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer store.Close()
+	store := postgresStore(t, ctx)
 	dag := workflow.DAG{Tasks: map[string]workflow.TaskSpec{}}
 	for i := 0; i < 40; i++ {
 		key := fmt.Sprintf("task-%02d", i)
@@ -117,20 +104,7 @@ func TestRedisRedpandaAndMinIOContainers(t *testing.T) {
 
 func TestWorkerCrashLeaseRecovery(t *testing.T) {
 	ctx := context.Background()
-	container := start(t, ctx, testcontainers.ContainerRequest{
-		Image: "postgres:17-alpine", ExposedPorts: []string{"5432/tcp"},
-		Env:        map[string]string{"POSTGRES_DB": "runmesh", "POSTGRES_USER": "runmesh", "POSTGRES_PASSWORD": "runmesh"},
-		WaitingFor: wait.ForLog("database system is ready to accept connections").WithOccurrence(2).WithStartupTimeout(time.Minute),
-	})
-	host, _ := container.Host(ctx)
-	port, _ := container.MappedPort(ctx, "5432/tcp")
-	databaseURL := fmt.Sprintf("postgres://runmesh:runmesh@%s:%s/runmesh?sslmode=disable", host, port.Port())
-	applyMigrations(t, ctx, databaseURL)
-	store, err := storage.New(ctx, databaseURL)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer store.Close()
+	store := postgresStore(t, ctx)
 
 	dag := workflow.DAG{Tasks: map[string]workflow.TaskSpec{
 		"recover": {Handler: "test.recover", MaximumAttempts: 3},
@@ -206,6 +180,163 @@ func TestWorkerCrashLeaseRecovery(t *testing.T) {
 	assertAttempt(t, ctx, store, taskID, 2, "worker-replacement", "SUCCEEDED", "")
 }
 
+func TestRetryExhaustionAndDeadLetterReplay(t *testing.T) {
+	ctx := context.Background()
+	store := postgresStore(t, ctx)
+	tenantID := "00000000-0000-0000-0000-000000000001"
+	userID := "00000000-0000-0000-0000-000000000001"
+	dag := workflow.DAG{Tasks: map[string]workflow.TaskSpec{
+		"unstable":    {Handler: "test.unstable", MaximumAttempts: 2},
+		"independent": {Handler: "test.independent"},
+		"downstream":  {Handler: "test.downstream", DependsOn: []string{"unstable"}},
+	}}
+	definition, err := store.CreateWorkflow(ctx, tenantID, userID, "dead-letter-replay", dag)
+	if err != nil {
+		t.Fatal(err)
+	}
+	run, created, err := store.CreateRun(ctx, tenantID, userID, definition.ID, "dead-letter-replay", json.RawMessage(`{"value":1}`))
+	if err != nil || !created {
+		t.Fatalf("create run: created=%v err=%v", created, err)
+	}
+	service := scheduler.Service{Store: store}
+	if err = service.RunOnce(ctx); err != nil {
+		t.Fatal(err)
+	}
+	run, err = store.GetRun(ctx, tenantID, run.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	taskID := taskByKey(t, run, "unstable").ID
+
+	first, err := store.LeaseTask(ctx, taskID, "worker-1", time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = store.StartTask(ctx, taskID, "worker-1"); err != nil {
+		t.Fatal(err)
+	}
+	failed, err := store.FailTask(ctx, taskID, "worker-1", storage.Failure{Retryable: true, ErrorType: "Transient", ErrorMessage: "first failure"})
+	if err != nil || failed.Status != "RETRY_WAIT" {
+		t.Fatalf("first failure: task=%+v err=%v", failed, err)
+	}
+	assertAttempt(t, ctx, store, taskID, 1, "worker-1", "RETRY_WAIT", "Transient")
+	time.Sleep(time.Until(failed.AvailableAt) + 25*time.Millisecond)
+	if err = service.RunOnce(ctx); err != nil {
+		t.Fatal(err)
+	}
+
+	second, err := store.LeaseTask(ctx, taskID, "worker-2", time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = store.StartTask(ctx, taskID, "worker-2"); err != nil {
+		t.Fatal(err)
+	}
+	dead, err := store.FailTask(ctx, taskID, "worker-2", storage.Failure{Retryable: true, ErrorType: "Transient", ErrorMessage: "second failure"})
+	if err != nil || dead.Status != "DEAD" || second.AttemptCount != 2 {
+		t.Fatalf("retry exhaustion: task=%+v lease=%+v err=%v", dead, second, err)
+	}
+	assertAttempt(t, ctx, store, taskID, 2, "worker-2", "DEAD", "Transient")
+	assertOutboxEvent(t, ctx, store, taskID, "task.dead")
+	failedRun, err := store.GetRun(ctx, tenantID, run.ID)
+	if err != nil || failedRun.Status != "FAILED" || failedRun.CompletedAt == nil {
+		t.Fatalf("workflow did not fail after exhaustion: run=%+v err=%v", failedRun, err)
+	}
+	if taskByKey(t, failedRun, "independent").Status != "CANCELLED" || taskByKey(t, failedRun, "downstream").Status != "CANCELLED" {
+		t.Fatalf("unfinished tasks were not cancelled: %+v", failedRun.Tasks)
+	}
+	deadTasks, err := store.DeadLetter(ctx, tenantID)
+	if err != nil || len(deadTasks) != 1 || deadTasks[0].ID != taskID {
+		t.Fatalf("dead-letter listing: tasks=%+v err=%v", deadTasks, err)
+	}
+
+	if err = store.ReplayDead(ctx, tenantID, userID, taskID); err != nil {
+		t.Fatal(err)
+	}
+	replayed, err := store.GetRun(ctx, tenantID, run.ID)
+	if err != nil || replayed.Status != "RUNNING" || replayed.CompletedAt != nil {
+		t.Fatalf("replay did not reopen workflow: run=%+v err=%v", replayed, err)
+	}
+	replayedTask := taskByKey(t, replayed, "unstable")
+	if replayedTask.Status != "READY" || replayedTask.MaximumAttempts != 3 {
+		t.Fatalf("replayed task is not claimable: %+v", replayedTask)
+	}
+	if taskByKey(t, replayed, "independent").Status != "READY" || taskByKey(t, replayed, "downstream").Status != "BLOCKED" {
+		t.Fatalf("cancelled task states were not rebuilt: %+v", replayed.Tasks)
+	}
+	deadTasks, err = store.DeadLetter(ctx, tenantID)
+	if err != nil || len(deadTasks) != 0 {
+		t.Fatalf("replayed task remained in dead letter: tasks=%+v err=%v", deadTasks, err)
+	}
+	assertOutboxEvent(t, ctx, store, taskID, "task.replayed")
+	var auditCount int
+	if err = store.Pool.QueryRow(ctx, `SELECT count(*) FROM audit_events WHERE tenant_id=$1 AND actor_id=$2 AND action='task.replay' AND resource_id=$3`, tenantID, userID, taskID).Scan(&auditCount); err != nil || auditCount != 1 {
+		t.Fatalf("replay audit count=%d err=%v", auditCount, err)
+	}
+
+	if err = service.RunOnce(ctx); err != nil {
+		t.Fatal(err)
+	}
+	independentID := taskByKey(t, replayed, "independent").ID
+	if _, err = store.LeaseTask(ctx, independentID, "worker-independent", time.Minute); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = store.StartTask(ctx, independentID, "worker-independent"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = store.CompleteTask(ctx, independentID, "worker-independent", json.RawMessage(`{"independent":true}`), ""); err != nil {
+		t.Fatal(err)
+	}
+	third, err := store.LeaseTask(ctx, taskID, "worker-3", time.Minute)
+	if err != nil || third.AttemptCount != first.AttemptCount+2 {
+		t.Fatalf("third lease: task=%+v err=%v", third, err)
+	}
+	if _, err = store.StartTask(ctx, taskID, "worker-3"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = store.CompleteTask(ctx, taskID, "worker-3", json.RawMessage(`{"replayed":true}`), ""); err != nil {
+		t.Fatal(err)
+	}
+	if err = service.RunOnce(ctx); err != nil {
+		t.Fatal(err)
+	}
+	beforeDownstream, err := store.GetRun(ctx, tenantID, run.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	downstreamID := taskByKey(t, beforeDownstream, "downstream").ID
+	if _, err = store.LeaseTask(ctx, downstreamID, "worker-downstream", time.Minute); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = store.StartTask(ctx, downstreamID, "worker-downstream"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = store.CompleteTask(ctx, downstreamID, "worker-downstream", json.RawMessage(`{"downstream":true}`), ""); err != nil {
+		t.Fatal(err)
+	}
+	completed, err := store.GetRun(ctx, tenantID, run.ID)
+	if err != nil || completed.Status != "SUCCEEDED" {
+		t.Fatalf("replayed workflow did not succeed: run=%+v err=%v", completed, err)
+	}
+	for _, completedTask := range completed.Tasks {
+		if completedTask.Status != "SUCCEEDED" {
+			t.Fatalf("task %q did not succeed after replay: %+v", completedTask.TaskKey, completedTask)
+		}
+	}
+	assertAttempt(t, ctx, store, taskID, 3, "worker-3", "SUCCEEDED", "")
+}
+
+func taskByKey(t *testing.T, run workflow.Run, key string) workflow.TaskRun {
+	t.Helper()
+	for _, task := range run.Tasks {
+		if task.TaskKey == key {
+			return task
+		}
+	}
+	t.Fatalf("task %q not found in run %+v", key, run)
+	return workflow.TaskRun{}
+}
+
 func waitForLeaseExpiry(t *testing.T, ctx context.Context, store *storage.Store, taskID string) {
 	t.Helper()
 	deadline := time.Now().Add(3 * time.Second)
@@ -244,6 +375,25 @@ func assertOutboxEvent(t *testing.T, ctx context.Context, store *storage.Store, 
 	if count != 1 {
 		t.Fatalf("outbox event %q count=%d, want 1", eventType, count)
 	}
+}
+
+func postgresStore(t *testing.T, ctx context.Context) *storage.Store {
+	t.Helper()
+	container := start(t, ctx, testcontainers.ContainerRequest{
+		Image: "postgres:17-alpine", ExposedPorts: []string{"5432/tcp"},
+		Env:        map[string]string{"POSTGRES_DB": "runmesh", "POSTGRES_USER": "runmesh", "POSTGRES_PASSWORD": "runmesh"},
+		WaitingFor: wait.ForLog("database system is ready to accept connections").WithOccurrence(2).WithStartupTimeout(time.Minute),
+	})
+	host, _ := container.Host(ctx)
+	port, _ := container.MappedPort(ctx, "5432/tcp")
+	databaseURL := fmt.Sprintf("postgres://runmesh:runmesh@%s:%s/runmesh?sslmode=disable", host, port.Port())
+	applyMigrations(t, ctx, databaseURL)
+	store, err := storage.New(ctx, databaseURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(store.Close)
+	return store
 }
 
 func start(t *testing.T, ctx context.Context, request testcontainers.ContainerRequest) testcontainers.Container {
