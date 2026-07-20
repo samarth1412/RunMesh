@@ -234,7 +234,13 @@ func (s *Server) createArtifactUpload(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	p := auth.PrincipalFrom(r.Context())
-	upload, err := s.Artifacts.CreateUpload(r.Context(), p.TenantID, p.UserID, req.Kind, req.ContentType, req.SizeBytes, req.ChecksumSHA256, req.TaskRunID)
+	var upload artifact.Upload
+	var err error
+	if strings.HasPrefix(r.URL.Path, "/internal/") {
+		upload, err = s.Artifacts.CreateInternalUpload(r.Context(), p.TenantID, p.UserID, req.Kind, req.ContentType, req.SizeBytes, req.ChecksumSHA256, req.TaskRunID)
+	} else {
+		upload, err = s.Artifacts.CreateUpload(r.Context(), p.TenantID, p.UserID, req.Kind, req.ContentType, req.SizeBytes, req.ChecksumSHA256, req.TaskRunID)
+	}
 	if err != nil {
 		if errors.Is(err, storage.ErrNotFound) {
 			writeError(w, 404, "task not found")
@@ -265,7 +271,13 @@ func (s *Server) downloadArtifact(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	p := auth.PrincipalFrom(r.Context())
-	download, err := s.Artifacts.Download(r.Context(), p.TenantID, r.PathValue("id"))
+	var download artifact.Download
+	var err error
+	if strings.HasPrefix(r.URL.Path, "/internal/") {
+		download, err = s.Artifacts.DownloadInternal(r.Context(), p.TenantID, r.PathValue("id"))
+	} else {
+		download, err = s.Artifacts.Download(r.Context(), p.TenantID, r.PathValue("id"))
+	}
 	if handleErr(w, err) {
 		return
 	}

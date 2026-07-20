@@ -57,7 +57,7 @@ func main() {
 	}
 	defer store.Close()
 	artifactManager, err := artifact.New(ctx, store, artifact.Config{
-		Endpoint: cfg.ArtifactEndpoint, Region: cfg.ArtifactRegion, Bucket: cfg.ArtifactBucket,
+		Endpoint: cfg.ArtifactEndpoint, PublicEndpoint: cfg.ArtifactPublicEndpoint, Region: cfg.ArtifactRegion, Bucket: cfg.ArtifactBucket,
 		AccessKey: cfg.ArtifactAccessKey, SecretKey: cfg.ArtifactSecretKey,
 		PathStyle: cfg.ArtifactPathStyle, CreateBucket: cfg.ArtifactCreateBucket, PresignExpiry: cfg.ArtifactPresignExpiry,
 	})

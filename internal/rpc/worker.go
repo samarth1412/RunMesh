@@ -129,7 +129,7 @@ func (s *WorkerServer) CreateArtifactUpload(ctx context.Context, request *runmes
 	if err != nil {
 		return nil, err
 	}
-	upload, err := s.Artifacts.CreateUpload(ctx, principal.TenantID, principal.UserID, request.Kind, request.ContentType, request.SizeBytes, request.ChecksumSha256, &request.TaskRunId)
+	upload, err := s.Artifacts.CreateInternalUpload(ctx, principal.TenantID, principal.UserID, request.Kind, request.ContentType, request.SizeBytes, request.ChecksumSha256, &request.TaskRunId)
 	if err != nil {
 		return nil, rpcError(err)
 	}
@@ -163,7 +163,7 @@ func (s *WorkerServer) GetArtifactDownload(ctx context.Context, request *runmesh
 	if err != nil {
 		return nil, err
 	}
-	download, err := s.Artifacts.Download(ctx, principal.TenantID, request.ArtifactUri)
+	download, err := s.Artifacts.DownloadInternal(ctx, principal.TenantID, request.ArtifactUri)
 	if err != nil {
 		return nil, rpcError(err)
 	}

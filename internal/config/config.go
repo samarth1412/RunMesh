@@ -9,65 +9,67 @@ import (
 )
 
 type Config struct {
-	HTTPAddr              string
-	GRPCAddr              string
-	SchedulerMetricsAddr  string
-	DatabaseURL           string
-	KafkaBrokers          []string
-	KafkaTopic            string
-	InternalToken         string
-	LeaseDuration         time.Duration
-	SchedulerInterval     time.Duration
-	OutboxInterval        time.Duration
-	DevAuth               bool
-	DevTenantID           string
-	DevUserID             string
-	DevRole               string
-	OIDCIssuer            string
-	OIDCAudience          string
-	OIDCJWKSURL           string
-	OIDCTenantClaim       string
-	APIKeyPepper          string
-	RedisURL              string
-	RateLimitRate         int
-	RateLimitBurst        int
-	RateLimitFailOpen     bool
-	ArtifactEndpoint      string
-	ArtifactRegion        string
-	ArtifactBucket        string
-	ArtifactAccessKey     string
-	ArtifactSecretKey     string
-	ArtifactPathStyle     bool
-	ArtifactCreateBucket  bool
-	ArtifactPresignExpiry time.Duration
+	HTTPAddr               string
+	GRPCAddr               string
+	SchedulerMetricsAddr   string
+	DatabaseURL            string
+	KafkaBrokers           []string
+	KafkaTopic             string
+	InternalToken          string
+	LeaseDuration          time.Duration
+	SchedulerInterval      time.Duration
+	OutboxInterval         time.Duration
+	DevAuth                bool
+	DevTenantID            string
+	DevUserID              string
+	DevRole                string
+	OIDCIssuer             string
+	OIDCAudience           string
+	OIDCJWKSURL            string
+	OIDCTenantClaim        string
+	APIKeyPepper           string
+	RedisURL               string
+	RateLimitRate          int
+	RateLimitBurst         int
+	RateLimitFailOpen      bool
+	ArtifactEndpoint       string
+	ArtifactPublicEndpoint string
+	ArtifactRegion         string
+	ArtifactBucket         string
+	ArtifactAccessKey      string
+	ArtifactSecretKey      string
+	ArtifactPathStyle      bool
+	ArtifactCreateBucket   bool
+	ArtifactPresignExpiry  time.Duration
 }
 
 func Load() (Config, error) {
 	c := Config{
-		HTTPAddr:             env("RUNMESH_HTTP_ADDR", ":8080"),
-		GRPCAddr:             env("RUNMESH_GRPC_ADDR", ":7001"),
-		SchedulerMetricsAddr: env("RUNMESH_SCHEDULER_METRICS_ADDR", ":9091"),
-		DatabaseURL:          env("RUNMESH_DATABASE_URL", "postgres://runmesh:runmesh@localhost:5432/runmesh?sslmode=disable"),
-		KafkaBrokers:         strings.Split(env("RUNMESH_KAFKA_BROKERS", "localhost:19092"), ","),
-		KafkaTopic:           env("RUNMESH_KAFKA_TOPIC", "runmesh.tasks"),
-		InternalToken:        env("RUNMESH_INTERNAL_TOKEN", ""),
-		DevAuth:              envBool("RUNMESH_DEV_AUTH", false),
-		DevTenantID:          env("RUNMESH_DEV_TENANT_ID", "00000000-0000-0000-0000-000000000001"),
-		DevUserID:            env("RUNMESH_DEV_USER_ID", "00000000-0000-0000-0000-000000000001"),
-		DevRole:              env("RUNMESH_DEV_ROLE", "admin"),
-		OIDCIssuer:           env("RUNMESH_OIDC_ISSUER", ""),
-		OIDCAudience:         env("RUNMESH_OIDC_AUDIENCE", "runmesh-web"),
-		OIDCJWKSURL:          env("RUNMESH_OIDC_JWKS_URL", ""),
-		OIDCTenantClaim:      env("RUNMESH_OIDC_TENANT_CLAIM", "runmesh_tenant_id"),
-		APIKeyPepper:         env("RUNMESH_API_KEY_PEPPER", ""),
-		RedisURL:             env("RUNMESH_REDIS_URL", "redis://localhost:6379/0"),
-		ArtifactEndpoint:     env("RUNMESH_ARTIFACT_ENDPOINT", ""),
-		ArtifactRegion:       env("RUNMESH_ARTIFACT_REGION", "us-east-1"),
-		ArtifactBucket:       env("RUNMESH_ARTIFACT_BUCKET", "runmesh"),
-		ArtifactAccessKey:    env("RUNMESH_ARTIFACT_ACCESS_KEY", ""),
-		ArtifactSecretKey:    env("RUNMESH_ARTIFACT_SECRET_KEY", ""),
-		ArtifactPathStyle:    envBool("RUNMESH_ARTIFACT_PATH_STYLE", false),
-		ArtifactCreateBucket: envBool("RUNMESH_ARTIFACT_CREATE_BUCKET", false),
+		HTTPAddr:               env("RUNMESH_HTTP_ADDR", ":8080"),
+		GRPCAddr:               env("RUNMESH_GRPC_ADDR", ":7001"),
+		SchedulerMetricsAddr:   env("RUNMESH_SCHEDULER_METRICS_ADDR", ":9091"),
+		DatabaseURL:            env("RUNMESH_DATABASE_URL", "postgres://runmesh:runmesh@localhost:5432/runmesh?sslmode=disable"),
+		KafkaBrokers:           strings.Split(env("RUNMESH_KAFKA_BROKERS", "localhost:19092"), ","),
+		KafkaTopic:             env("RUNMESH_KAFKA_TOPIC", "runmesh.tasks"),
+		InternalToken:          env("RUNMESH_INTERNAL_TOKEN", ""),
+		DevAuth:                envBool("RUNMESH_DEV_AUTH", false),
+		DevTenantID:            env("RUNMESH_DEV_TENANT_ID", "00000000-0000-0000-0000-000000000001"),
+		DevUserID:              env("RUNMESH_DEV_USER_ID", "00000000-0000-0000-0000-000000000001"),
+		DevRole:                env("RUNMESH_DEV_ROLE", "admin"),
+		OIDCIssuer:             env("RUNMESH_OIDC_ISSUER", ""),
+		OIDCAudience:           env("RUNMESH_OIDC_AUDIENCE", "runmesh-web"),
+		OIDCJWKSURL:            env("RUNMESH_OIDC_JWKS_URL", ""),
+		OIDCTenantClaim:        env("RUNMESH_OIDC_TENANT_CLAIM", "runmesh_tenant_id"),
+		APIKeyPepper:           env("RUNMESH_API_KEY_PEPPER", ""),
+		RedisURL:               env("RUNMESH_REDIS_URL", "redis://localhost:6379/0"),
+		ArtifactEndpoint:       env("RUNMESH_ARTIFACT_ENDPOINT", ""),
+		ArtifactPublicEndpoint: env("RUNMESH_ARTIFACT_PUBLIC_ENDPOINT", ""),
+		ArtifactRegion:         env("RUNMESH_ARTIFACT_REGION", "us-east-1"),
+		ArtifactBucket:         env("RUNMESH_ARTIFACT_BUCKET", "runmesh"),
+		ArtifactAccessKey:      env("RUNMESH_ARTIFACT_ACCESS_KEY", ""),
+		ArtifactSecretKey:      env("RUNMESH_ARTIFACT_SECRET_KEY", ""),
+		ArtifactPathStyle:      envBool("RUNMESH_ARTIFACT_PATH_STYLE", false),
+		ArtifactCreateBucket:   envBool("RUNMESH_ARTIFACT_CREATE_BUCKET", false),
 	}
 	var err error
 	if c.RateLimitRate, err = envInt("RUNMESH_RATE_LIMIT_RATE", 100); err != nil {

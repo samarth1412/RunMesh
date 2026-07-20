@@ -212,8 +212,8 @@ func TestProductionAPIKeysAndWorkerTenantIsolation(t *testing.T) {
 	store := postgresStore(t, ctx)
 	const tenantOne = "00000000-0000-0000-0000-000000000001"
 	const userOne = "00000000-0000-0000-0000-000000000001"
-	const tenantTwo = "00000000-0000-0000-0000-000000000010"
-	const userTwo = "00000000-0000-0000-0000-000000000010"
+	const tenantTwo = "00000000-0000-0000-0000-000000000020"
+	const userTwo = "00000000-0000-0000-0000-000000000020"
 	if _, err := store.Pool.Exec(ctx, `INSERT INTO tenants(id,name,plan) VALUES($1,'Other tenant','development')`, tenantTwo); err != nil {
 		t.Fatal(err)
 	}
