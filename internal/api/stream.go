@@ -7,7 +7,7 @@ import (
 	"time"
 
 	"github.com/gorilla/websocket"
-	"github.com/runmesh/runmesh/internal/auth"
+	"github.com/samarth1412/RunMesh/internal/auth"
 )
 
 var streamUpgrader = websocket.Upgrader{

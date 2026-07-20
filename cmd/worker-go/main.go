@@ -12,9 +12,9 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/runmesh/runmesh/internal/telemetry"
-	"github.com/runmesh/runmesh/internal/tracecontext"
-	runmesh "github.com/runmesh/runmesh/sdk/go"
+	"github.com/samarth1412/RunMesh/internal/telemetry"
+	"github.com/samarth1412/RunMesh/internal/tracecontext"
+	runmesh "github.com/samarth1412/RunMesh/sdk/go"
 	"github.com/segmentio/kafka-go"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
@@ -43,7 +43,7 @@ func main() {
 	workerID := env("RUNMESH_WORKER_ID", defaultWorkerID())
 	client := runmesh.NewClient(env("RUNMESH_ENDPOINT", "localhost:7001"), env("RUNMESH_INTERNAL_TOKEN", "local-development-token"), workerID)
 	defer client.Close()
-	reader := kafka.NewReader(kafka.ReaderConfig{Brokers: brokers, Topic: env("RUNMESH_KAFKA_TOPIC", "runmesh.tasks"), GroupID: "runmesh-workers", MinBytes: 1, MaxBytes: 10e6})
+	reader := kafka.NewReader(kafka.ReaderConfig{Brokers: brokers, Topic: env("RUNMESH_KAFKA_TOPIC", "runmesh.tasks"), GroupID: env("RUNMESH_KAFKA_GROUP_ID", "runmesh-workers"), MinBytes: 1, MaxBytes: 10e6})
 	defer reader.Close()
 	go report(ctx, client)
 	slog.Info("go worker started", "worker_id", workerID)
@@ -66,6 +66,12 @@ func main() {
 			_ = reader.CommitMessages(ctx, message)
 			continue
 		}
+		if !supported(d.Handler) {
+			if err = reader.CommitMessages(ctx, message); err != nil {
+				slog.Error("commit unsupported dispatch", "handler", d.Handler, "error", err)
+			}
+			continue
+		}
 		taskContext := tracecontext.IntoContext(ctx, header(message.Headers, "traceparent"))
 		if err = execute(taskContext, client, d.TaskRunID); err != nil {
 			slog.Error("execute task", "task_run_id", d.TaskRunID, "error", err)
@@ -73,6 +79,15 @@ func main() {
 		if err = reader.CommitMessages(ctx, message); err != nil {
 			slog.Error("commit offset", "error", err)
 		}
+	}
+}
+
+func supported(handler string) bool {
+	switch handler {
+	case "examples.greet", "examples.upper", "examples.notify", "examples.slow", "validation.dead":
+		return true
+	default:
+		return false
 	}
 }
 func execute(parent context.Context, client *runmesh.Client, id string) error {
@@ -120,6 +135,8 @@ func execute(parent context.Context, client *runmesh.Client, id string) error {
 		output = map[string]any{"message": fmt.Sprintf("Hello, %v!", input["name"]), "worker": "go"}
 	case "examples.upper":
 		output = map[string]any{"text": strings.ToUpper(fmt.Sprint(input["text"])), "worker": "go"}
+	case "examples.notify":
+		output = map[string]any{"delivered": true, "idempotency_key": id, "worker": "go"}
 	case "examples.slow":
 		delay := 200 * time.Millisecond
 		if value, ok := input["delay_ms"].(float64); ok && value >= 0 && value <= 30_000 {
@@ -131,6 +148,12 @@ func execute(parent context.Context, client *runmesh.Client, id string) error {
 		case <-ctx.Done():
 			return ctx.Err()
 		}
+	case "validation.dead":
+		err = errors.New("intentional permanent failure for validation")
+		_, _ = client.Fail(parent, id, false, err)
+		cancel()
+		<-heartbeatsDone
+		return err
 	default:
 		err = fmt.Errorf("unsupported handler %q", task.Handler)
 		_, _ = client.Fail(parent, id, true, err)
@@ -147,7 +170,7 @@ func report(ctx context.Context, client *runmesh.Client) {
 	ticker := time.NewTicker(10 * time.Second)
 	defer ticker.Stop()
 	for {
-		if err := client.Report(ctx, []string{"examples.greet", "examples.upper", "examples.slow"}, 0); err != nil {
+		if err := client.Report(ctx, []string{"examples.greet", "examples.upper", "examples.notify", "examples.slow", "validation.dead"}, 0); err != nil {
 			slog.Warn("worker heartbeat failed", "error", err)
 		}
 		select {

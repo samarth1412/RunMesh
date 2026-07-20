@@ -92,6 +92,7 @@ paths:
   /v1/runs/{id}:
     get:
       operationId: getRun
+      description: Returns tenant-scoped run state, task dependencies, active lease metadata, and immutable attempt history including workers and failure messages.
       parameters: [{$ref: '#/components/parameters/ID'}]
       responses: {"200": {description: Run with tasks}, "404": {description: Not found}}
   /v1/runs:

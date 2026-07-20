@@ -3,10 +3,16 @@ import { bearerToken } from './auth'
 import { runtimeConfig } from './runtime'
 
 const base = runtimeConfig.apiUrl ?? import.meta.env.VITE_API_URL ?? ''
+export class APIError extends Error {
+  constructor(public readonly status: number, message: string) {
+    super(message)
+    this.name = 'APIError'
+  }
+}
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const token = await bearerToken()
   const response = await fetch(base + path, { ...init, headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}), ...init?.headers } })
-  if (!response.ok) throw new Error((await response.json().catch(() => null))?.error ?? `${response.status} ${response.statusText}`)
+  if (!response.ok) throw new APIError(response.status, (await response.json().catch(() => null))?.error ?? `${response.status} ${response.statusText}`)
   return response.status === 204 ? (undefined as T) : response.json()
 }
 export const api = {

@@ -21,13 +21,13 @@ import (
 	toxiproxyclient "github.com/Shopify/toxiproxy/v2/client"
 	"github.com/jackc/pgx/v5"
 	"github.com/prometheus/client_golang/prometheus"
-	"github.com/runmesh/runmesh/internal/artifact"
-	"github.com/runmesh/runmesh/internal/auth"
-	"github.com/runmesh/runmesh/internal/messaging"
-	"github.com/runmesh/runmesh/internal/ratelimit"
-	"github.com/runmesh/runmesh/internal/scheduler"
-	"github.com/runmesh/runmesh/internal/storage"
-	"github.com/runmesh/runmesh/internal/workflow"
+	"github.com/samarth1412/RunMesh/internal/artifact"
+	"github.com/samarth1412/RunMesh/internal/auth"
+	"github.com/samarth1412/RunMesh/internal/messaging"
+	"github.com/samarth1412/RunMesh/internal/ratelimit"
+	"github.com/samarth1412/RunMesh/internal/scheduler"
+	"github.com/samarth1412/RunMesh/internal/storage"
+	"github.com/samarth1412/RunMesh/internal/workflow"
 	"github.com/segmentio/kafka-go"
 	"github.com/testcontainers/testcontainers-go"
 	"github.com/testcontainers/testcontainers-go/modules/redpanda"
@@ -141,69 +141,69 @@ func TestArtifactOwnershipPresigningAndSlowUploadRecovery(t *testing.T) {
 func TestPostgresIdempotencyAndConcurrentClaims(t *testing.T) {
 	ctx := context.Background()
 	store := postgresStore(t, ctx)
+	const tenantOne = "00000000-0000-0000-0000-000000000001"
+	const userOne = "00000000-0000-0000-0000-000000000001"
+	const tenantTwo = "00000000-0000-0000-0000-000000000020"
+	const userTwo = "00000000-0000-0000-0000-000000000020"
+	const taskCount = 240
 	dag := workflow.DAG{Tasks: map[string]workflow.TaskSpec{}}
-	for i := 0; i < 40; i++ {
-		key := fmt.Sprintf("task-%02d", i)
+	for i := 0; i < taskCount; i++ {
+		key := fmt.Sprintf("task-%03d", i)
 		dag.Tasks[key] = workflow.TaskSpec{Handler: "test.handle"}
 	}
-	definition, err := store.CreateWorkflow(ctx, "00000000-0000-0000-0000-000000000001", "00000000-0000-0000-0000-000000000001", "claims", dag)
+	definition, err := store.CreateWorkflow(ctx, tenantOne, userOne, "claims", dag)
 	if err != nil {
 		t.Fatal(err)
 	}
-	first, created, err := store.CreateRun(ctx, "00000000-0000-0000-0000-000000000001", "00000000-0000-0000-0000-000000000001", definition.ID, "same-key", json.RawMessage(`{"value":1}`))
+	first, created, err := store.CreateRun(ctx, tenantOne, userOne, definition.ID, "same-key", json.RawMessage(`{"value":1}`))
 	if err != nil || !created {
 		t.Fatalf("first submission: created=%v err=%v", created, err)
 	}
-	second, created, err := store.CreateRun(ctx, "00000000-0000-0000-0000-000000000001", "00000000-0000-0000-0000-000000000001", definition.ID, "same-key", json.RawMessage(`{"value":2}`))
+	second, created, err := store.CreateRun(ctx, tenantOne, userOne, definition.ID, "same-key", json.RawMessage(`{"value":2}`))
 	if err != nil || created || second.ID != first.ID {
 		t.Fatalf("duplicate submission: first=%s second=%s created=%v err=%v", first.ID, second.ID, created, err)
 	}
+	if _, err = store.Pool.Exec(ctx, `INSERT INTO tenants(id,name,plan) VALUES($1,'Idempotency tenant','development')`, tenantTwo); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = store.Pool.Exec(ctx, `INSERT INTO users(id,tenant_id,oidc_subject,email,role) VALUES($1,$2,'idempotency-user','idempotency@example.com','admin')`, userTwo, tenantTwo); err != nil {
+		t.Fatal(err)
+	}
+	secondDefinition, err := store.CreateWorkflow(ctx, tenantTwo, userTwo, "claims", workflow.DAG{Tasks: map[string]workflow.TaskSpec{"only": {Handler: "test.handle"}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	crossTenant, created, err := store.CreateRun(ctx, tenantTwo, userTwo, secondDefinition.ID, "same-key", json.RawMessage(`{"value":3}`))
+	if err != nil || !created || crossTenant.ID == first.ID {
+		t.Fatalf("tenant-scoped idempotency: first=%s cross_tenant=%s created=%v err=%v", first.ID, crossTenant.ID, created, err)
+	}
 
-	claimed := map[string]bool{}
-	var mu sync.Mutex
+	services := make([]scheduler.Service, 4)
+	for i := range services {
+		services[i] = scheduler.Service{Store: store}
+	}
 	var wg sync.WaitGroup
-	for i := 0; i < 8; i++ {
+	for i := range services {
 		wg.Add(1)
-		go func() {
+		go func(service *scheduler.Service) {
 			defer wg.Done()
-			for {
-				tx, e := store.Pool.BeginTx(ctx, pgx.TxOptions{})
-				if e != nil {
-					t.Error(e)
-					return
-				}
-				var id string
-				e = tx.QueryRow(ctx, `SELECT id FROM task_runs WHERE workflow_run_id=$1 AND status='READY' FOR UPDATE SKIP LOCKED LIMIT 1`, first.ID).Scan(&id)
-				if e == pgx.ErrNoRows {
-					_ = tx.Rollback(ctx)
-					return
-				}
-				if e != nil {
-					_ = tx.Rollback(ctx)
-					t.Error(e)
-					return
-				}
-				if _, e = tx.Exec(ctx, `UPDATE task_runs SET status='DISPATCHING' WHERE id=$1`, id); e != nil {
-					_ = tx.Rollback(ctx)
-					t.Error(e)
-					return
-				}
-				if e = tx.Commit(ctx); e != nil {
-					t.Error(e)
-					return
-				}
-				mu.Lock()
-				if claimed[id] {
-					t.Errorf("task %s claimed twice", id)
-				}
-				claimed[id] = true
-				mu.Unlock()
+			if runErr := service.RunOnce(ctx); runErr != nil {
+				t.Error(runErr)
 			}
-		}()
+		}(&services[i])
 	}
 	wg.Wait()
-	if len(claimed) != 40 {
-		t.Fatalf("claimed %d tasks, want 40", len(claimed))
+	var dispatched, dispatchEvents, distinctDispatches, maxDispatchesPerTask int
+	if err = store.Pool.QueryRow(ctx, `SELECT
+		count(*) FILTER (WHERE status='DISPATCHING'),
+		(SELECT count(*) FROM outbox_events WHERE event_type='task.dispatch' AND payload->>'workflow_run_id'=$1::text),
+		(SELECT count(DISTINCT aggregate_id) FROM outbox_events WHERE event_type='task.dispatch' AND payload->>'workflow_run_id'=$1::text),
+		COALESCE((SELECT max(event_count) FROM (SELECT count(*) event_count FROM outbox_events WHERE event_type='task.dispatch' AND payload->>'workflow_run_id'=$1::text GROUP BY aggregate_id) counts),0)
+		FROM task_runs WHERE workflow_run_id=$1::uuid`, first.ID).Scan(&dispatched, &dispatchEvents, &distinctDispatches, &maxDispatchesPerTask); err != nil {
+		t.Fatal(err)
+	}
+	if dispatched != taskCount || dispatchEvents != taskCount || distinctDispatches != taskCount || maxDispatchesPerTask != 1 {
+		t.Fatalf("concurrent scheduler claims: dispatched=%d events=%d distinct=%d max_per_task=%d", dispatched, dispatchEvents, distinctDispatches, maxDispatchesPerTask)
 	}
 }
 
@@ -253,6 +253,24 @@ func TestProductionAPIKeysAndWorkerTenantIsolation(t *testing.T) {
 	}
 	if err = store.TaskBelongsToTenant(ctx, taskID, tenantTwo); !errors.Is(err, storage.ErrNotFound) {
 		t.Fatalf("cross-tenant task lookup error=%v, want not found", err)
+	}
+	if err = store.ActiveTaskLeaseBelongsToWorker(ctx, taskID, tenantOne, "worker-one"); !errors.Is(err, storage.ErrLeaseLost) {
+		t.Fatalf("undispatched task active lease error=%v, want lease lost", err)
+	}
+	if err = (&scheduler.Service{Store: store}).RunOnce(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = store.LeaseTask(ctx, taskID, "worker-one", time.Minute); err != nil {
+		t.Fatal(err)
+	}
+	if err = store.ActiveTaskLeaseBelongsToWorker(ctx, taskID, tenantOne, "worker-one"); err != nil {
+		t.Fatalf("active worker lease: %v", err)
+	}
+	if err = store.ActiveTaskLeaseBelongsToWorker(ctx, taskID, tenantOne, "worker-two"); !errors.Is(err, storage.ErrLeaseLost) {
+		t.Fatalf("wrong worker active lease error=%v, want lease lost", err)
+	}
+	if err = store.ActiveTaskLeaseBelongsToWorker(ctx, taskID, tenantTwo, "worker-one"); !errors.Is(err, storage.ErrNotFound) {
+		t.Fatalf("cross-tenant active lease error=%v, want not found", err)
 	}
 	if err = store.WorkerHeartbeat(ctx, tenantOne, "shared-worker-id", []string{"test.secure"}, 1, nil); err != nil {
 		t.Fatal(err)
@@ -524,10 +542,11 @@ func TestRedisRedpandaAndMinIOContainers(t *testing.T) {
 func TestWorkerCrashLeaseRecovery(t *testing.T) {
 	ctx := context.Background()
 	store := postgresStore(t, ctx)
-
-	dag := workflow.DAG{Tasks: map[string]workflow.TaskSpec{
-		"recover": {Handler: "test.recover", MaximumAttempts: 3},
-	}}
+	const taskCount = 12
+	dag := workflow.DAG{Tasks: make(map[string]workflow.TaskSpec, taskCount)}
+	for i := 0; i < taskCount; i++ {
+		dag.Tasks[fmt.Sprintf("recover-%02d", i)] = workflow.TaskSpec{Handler: "test.recover", MaximumAttempts: 3}
+	}
 	definition, err := store.CreateWorkflow(ctx, "00000000-0000-0000-0000-000000000001", "00000000-0000-0000-0000-000000000001", "worker-crash", dag)
 	if err != nil {
 		t.Fatal(err)
@@ -542,61 +561,93 @@ func TestWorkerCrashLeaseRecovery(t *testing.T) {
 		t.Fatal(err)
 	}
 	run, err = store.GetRun(ctx, "00000000-0000-0000-0000-000000000001", run.ID)
-	if err != nil || len(run.Tasks) != 1 || run.Tasks[0].Status != "DISPATCHING" {
-		t.Fatalf("task was not dispatched: run=%+v err=%v", run, err)
+	if err != nil || len(run.Tasks) != taskCount {
+		t.Fatalf("tasks were not dispatched: count=%d err=%v", len(run.Tasks), err)
 	}
-	taskID := run.Tasks[0].ID
-	first, err := store.LeaseTask(ctx, taskID, "worker-crashed", 150*time.Millisecond)
-	if err != nil {
-		t.Fatal(err)
+	workerByTask := make(map[string]string, taskCount)
+	for i, task := range run.Tasks {
+		if task.Status != "DISPATCHING" {
+			t.Fatalf("task %q status=%s, want DISPATCHING", task.TaskKey, task.Status)
+		}
+		workerID := fmt.Sprintf("worker-crashed-%02d", i)
+		workerByTask[task.ID] = workerID
+		if _, err = store.LeaseTask(ctx, task.ID, workerID, 150*time.Millisecond); err != nil {
+			t.Fatal(err)
+		}
+		if _, err = store.StartTask(ctx, task.ID, workerID); err != nil {
+			t.Fatal(err)
+		}
 	}
-	if _, err = store.StartTask(ctx, taskID, "worker-crashed"); err != nil {
-		t.Fatal(err)
+	for _, task := range run.Tasks {
+		waitForLeaseExpiry(t, ctx, store, task.ID)
 	}
-	waitForLeaseExpiry(t, ctx, store, taskID)
 
+	recoveryStarted := time.Now()
 	if err = service.RunOnce(ctx); err != nil {
 		t.Fatal(err)
 	}
+	recoveryDuration := time.Since(recoveryStarted)
 	recovered, err := store.GetRun(ctx, "00000000-0000-0000-0000-000000000001", run.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
-	task := recovered.Tasks[0]
-	if task.Status != "RETRY_WAIT" || task.AttemptCount != 1 || task.LeaseOwner != nil || task.LeaseExpiresAt != nil {
-		t.Fatalf("expired lease was not recovered: %+v", task)
+	latestAvailability := time.Time{}
+	for _, task := range recovered.Tasks {
+		if task.Status != "RETRY_WAIT" || task.AttemptCount != 1 || task.LeaseOwner != nil || task.LeaseExpiresAt != nil {
+			t.Fatalf("expired lease was not recovered: %+v", task)
+		}
+		if task.AvailableAt.After(latestAvailability) {
+			latestAvailability = task.AvailableAt
+		}
+		staleWorker := workerByTask[task.ID]
+		if _, _, heartbeatErr := store.HeartbeatTask(ctx, task.ID, staleWorker, time.Minute); !errors.Is(heartbeatErr, storage.ErrLeaseLost) {
+			t.Fatalf("stale worker heartbeat task=%s error=%v, want ErrLeaseLost", task.ID, heartbeatErr)
+		}
+		if _, completeErr := store.CompleteTask(ctx, task.ID, staleWorker, json.RawMessage(`{"late":true}`), ""); !errors.Is(completeErr, storage.ErrLeaseLost) {
+			t.Fatalf("stale worker completion task=%s error=%v, want ErrLeaseLost", task.ID, completeErr)
+		}
+		assertAttempt(t, ctx, store, task.ID, 1, staleWorker, "RETRY_WAIT", "LeaseExpired")
+		assertOutboxEvent(t, ctx, store, task.ID, "task.retry_wait")
 	}
-	if task.AvailableAt.Before(time.Now().Add(time.Second)) {
-		t.Fatalf("retry backoff was not applied: available_at=%s", task.AvailableAt)
-	}
-	if _, _, err = store.HeartbeatTask(ctx, taskID, "worker-crashed", time.Minute); !errors.Is(err, storage.ErrLeaseLost) {
-		t.Fatalf("stale worker heartbeat error=%v, want ErrLeaseLost", err)
-	}
-	assertAttempt(t, ctx, store, taskID, 1, "worker-crashed", "RETRY_WAIT", "LeaseExpired")
-	assertOutboxEvent(t, ctx, store, taskID, "task.retry_wait")
+	t.Logf("recovered %d simultaneously expired leases in %s", taskCount, recoveryDuration)
 
-	time.Sleep(time.Until(task.AvailableAt) + 25*time.Millisecond)
+	time.Sleep(time.Until(latestAvailability) + 25*time.Millisecond)
 	if err = service.RunOnce(ctx); err != nil {
 		t.Fatal(err)
 	}
-	second, err := store.LeaseTask(ctx, taskID, "worker-replacement", time.Minute)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if second.AttemptCount != first.AttemptCount+1 {
-		t.Fatalf("replacement attempt=%d, want %d", second.AttemptCount, first.AttemptCount+1)
-	}
-	if _, err = store.StartTask(ctx, taskID, "worker-replacement"); err != nil {
-		t.Fatal(err)
-	}
-	if _, err = store.CompleteTask(ctx, taskID, "worker-replacement", json.RawMessage(`{"recovered":true}`), ""); err != nil {
-		t.Fatal(err)
+	for i, task := range recovered.Tasks {
+		workerID := fmt.Sprintf("worker-replacement-%02d", i)
+		second, leaseErr := store.LeaseTask(ctx, task.ID, workerID, time.Minute)
+		if leaseErr != nil {
+			t.Fatal(leaseErr)
+		}
+		if second.AttemptCount != 2 {
+			t.Fatalf("replacement attempt=%d, want 2", second.AttemptCount)
+		}
+		if _, err = store.StartTask(ctx, task.ID, workerID); err != nil {
+			t.Fatal(err)
+		}
+		if _, err = store.CompleteTask(ctx, task.ID, workerID, json.RawMessage(`{"recovered":true}`), ""); err != nil {
+			t.Fatal(err)
+		}
 	}
 	completed, err := store.GetRun(ctx, "00000000-0000-0000-0000-000000000001", run.ID)
-	if err != nil || completed.Status != "SUCCEEDED" || completed.Tasks[0].Status != "SUCCEEDED" {
+	if err != nil || completed.Status != "SUCCEEDED" || len(completed.Tasks) != taskCount {
 		t.Fatalf("replacement worker did not complete run: run=%+v err=%v", completed, err)
 	}
-	assertAttempt(t, ctx, store, taskID, 2, "worker-replacement", "SUCCEEDED", "")
+	for i, task := range completed.Tasks {
+		if task.Status != "SUCCEEDED" || task.AttemptCount != 2 {
+			t.Fatalf("recovered task final state: %+v", task)
+		}
+		assertAttempt(t, ctx, store, task.ID, 2, fmt.Sprintf("worker-replacement-%02d", i), "SUCCEEDED", "")
+	}
+	var totalAttempts, recoveredTasks int
+	if err = store.Pool.QueryRow(ctx, `SELECT count(*),count(DISTINCT task_run_id) FILTER (WHERE attempt_number=2) FROM task_attempts WHERE task_run_id IN (SELECT id FROM task_runs WHERE workflow_run_id=$1)`, run.ID).Scan(&totalAttempts, &recoveredTasks); err != nil {
+		t.Fatal(err)
+	}
+	if totalAttempts != taskCount*2 || recoveredTasks != taskCount {
+		t.Fatalf("attempt history: total=%d recovered_tasks=%d", totalAttempts, recoveredTasks)
+	}
 }
 
 func TestDuplicateDispatchIsLeasedOnce(t *testing.T) {
@@ -872,6 +923,214 @@ func TestTransactionalOutboxRecoversAfterBrokerOutage(t *testing.T) {
 	defer cancelNoDuplicate()
 	if message, readErr := reader.FetchMessage(noDuplicateContext); !errors.Is(readErr, context.DeadlineExceeded) {
 		t.Fatalf("already-published events were sent again: message=%+v err=%v", message, readErr)
+	}
+}
+
+func TestOutboxPublishesWithoutHoldingDatabaseLocks(t *testing.T) {
+	ctx := context.Background()
+	store := postgresStore(t, ctx)
+	publisher := &blockingPublisher{started: make(chan struct{}), release: make(chan struct{})}
+	service := scheduler.Service{Store: store, Publisher: publisher}
+	tenantID := "00000000-0000-0000-0000-000000000001"
+	userID := "00000000-0000-0000-0000-000000000001"
+	definition, err := store.CreateWorkflow(ctx, tenantID, userID, "outbox-lock-window", workflow.DAG{Tasks: map[string]workflow.TaskSpec{"only": {Handler: "test.only"}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	run, created, err := store.CreateRun(ctx, tenantID, userID, definition.ID, "outbox-lock-window", json.RawMessage(`{}`))
+	if err != nil || !created {
+		t.Fatalf("create run: created=%v err=%v", created, err)
+	}
+	var eventID string
+	if err = store.Pool.QueryRow(ctx, `SELECT id FROM outbox_events WHERE aggregate_id=$1`, run.ID).Scan(&eventID); err != nil {
+		t.Fatal(err)
+	}
+
+	publishDone := make(chan error, 1)
+	go func() { publishDone <- service.PublishOnce(ctx) }()
+	select {
+	case <-publisher.started:
+	case <-time.After(5 * time.Second):
+		t.Fatal("publisher was not called")
+	}
+
+	tx, err := store.Pool.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var lockedID string
+	if err = tx.QueryRow(ctx, `SELECT id FROM outbox_events WHERE id=$1 FOR UPDATE NOWAIT`, eventID).Scan(&lockedID); err != nil {
+		_ = tx.Rollback(ctx)
+		t.Fatalf("Kafka publish retained a PostgreSQL row lock: %v", err)
+	}
+	if err = tx.Rollback(ctx); err != nil {
+		t.Fatal(err)
+	}
+	close(publisher.release)
+	if err = <-publishDone; err != nil {
+		t.Fatal(err)
+	}
+
+	var published bool
+	if err = store.Pool.QueryRow(ctx, `SELECT published_at IS NOT NULL FROM outbox_events WHERE id=$1`, eventID).Scan(&published); err != nil || !published {
+		t.Fatalf("event acknowledgement: published=%v err=%v", published, err)
+	}
+}
+
+func TestOutboxRepublishesAfterDatabaseAcknowledgementFailure(t *testing.T) {
+	ctx := context.Background()
+	store := postgresStore(t, ctx)
+	_, broker := redpandaContainer(t, ctx)
+	topic := "outbox-ack-failure"
+	createTopic(t, ctx, broker, topic)
+	publisher := messaging.NewPublisher([]string{broker}, topic)
+	t.Cleanup(func() { _ = publisher.Close() })
+	service := scheduler.Service{Store: store, Publisher: publisher}
+	tenantID := "00000000-0000-0000-0000-000000000001"
+	userID := "00000000-0000-0000-0000-000000000001"
+	definition, err := store.CreateWorkflow(ctx, tenantID, userID, "outbox-ack-failure", workflow.DAG{Tasks: map[string]workflow.TaskSpec{"only": {Handler: "test.only"}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	run, created, err := store.CreateRun(ctx, tenantID, userID, definition.ID, "outbox-ack-failure", json.RawMessage(`{}`))
+	if err != nil || !created {
+		t.Fatalf("create run: created=%v err=%v", created, err)
+	}
+	var eventID string
+	if err = store.Pool.QueryRow(ctx, `SELECT id FROM outbox_events WHERE aggregate_id=$1`, run.ID).Scan(&eventID); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err = store.Pool.Exec(ctx, `CREATE FUNCTION reject_outbox_ack() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN IF OLD.published_at IS NULL AND NEW.published_at IS NOT NULL THEN RAISE EXCEPTION 'injected acknowledgement failure'; END IF; RETURN NEW; END $$`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = store.Pool.Exec(ctx, `CREATE TRIGGER reject_outbox_ack BEFORE UPDATE ON outbox_events FOR EACH ROW EXECUTE FUNCTION reject_outbox_ack()`); err != nil {
+		t.Fatal(err)
+	}
+	if err = service.PublishOnce(ctx); err == nil {
+		t.Fatal("publication unexpectedly acknowledged while the database rejected the update")
+	}
+	if _, err = store.Pool.Exec(ctx, `DROP TRIGGER reject_outbox_ack ON outbox_events`); err != nil {
+		t.Fatal(err)
+	}
+	if err = service.PublishOnce(ctx); err != nil {
+		t.Fatal(err)
+	}
+
+	reader := kafka.NewReader(kafka.ReaderConfig{Brokers: []string{broker}, Topic: topic, Partition: 0, MinBytes: 1, MaxBytes: 1e6, StartOffset: kafka.FirstOffset})
+	t.Cleanup(func() { _ = reader.Close() })
+	readContext, cancelRead := context.WithTimeout(ctx, 10*time.Second)
+	defer cancelRead()
+	for i := 0; i < 2; i++ {
+		message, readErr := reader.FetchMessage(readContext)
+		if readErr != nil {
+			t.Fatal(readErr)
+		}
+		if got := headerValue(message.Headers, "event_id"); got != eventID {
+			t.Fatalf("publication %d event_id=%q, want duplicate %q", i+1, got, eventID)
+		}
+	}
+	var published bool
+	var attempts int
+	if err = store.Pool.QueryRow(ctx, `SELECT published_at IS NOT NULL,publish_attempts FROM outbox_events WHERE id=$1`, eventID).Scan(&published, &attempts); err != nil {
+		t.Fatal(err)
+	}
+	if !published || attempts != 2 {
+		t.Fatalf("acknowledgement recovery: published=%v publish_attempts=%d", published, attempts)
+	}
+}
+
+func TestConcurrentOutboxPublishersPreserveWorkflowOrderingAcrossPartitions(t *testing.T) {
+	ctx := context.Background()
+	store := postgresStore(t, ctx)
+	_, broker := redpandaContainer(t, ctx)
+	topic := "outbox-concurrent"
+	createTopic(t, ctx, broker, topic, 6)
+	publisherA := messaging.NewPublisher([]string{broker}, topic)
+	publisherB := messaging.NewPublisher([]string{broker}, topic)
+	t.Cleanup(func() { _ = publisherA.Close() })
+	t.Cleanup(func() { _ = publisherB.Close() })
+	serviceA := scheduler.Service{Store: store, Publisher: publisherA, OutboxBatchSize: 1}
+	serviceB := scheduler.Service{Store: store, Publisher: publisherB, OutboxBatchSize: 1}
+	tenantID := "00000000-0000-0000-0000-000000000001"
+	userID := "00000000-0000-0000-0000-000000000001"
+	definition, err := store.CreateWorkflow(ctx, tenantID, userID, "outbox-concurrent", workflow.DAG{Tasks: map[string]workflow.TaskSpec{"only": {Handler: "test.only"}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	const runCount = 24
+	for i := 0; i < runCount; i++ {
+		if _, created, createErr := store.CreateRun(ctx, tenantID, userID, definition.ID, fmt.Sprintf("outbox-concurrent-%02d", i), json.RawMessage(`{}`)); createErr != nil || !created {
+			t.Fatalf("create run %d: created=%v err=%v", i, created, createErr)
+		}
+	}
+	if err = serviceA.RunOnce(ctx); err != nil {
+		t.Fatal(err)
+	}
+
+	start := make(chan struct{})
+	errorsByPublisher := make(chan error, 2)
+	for _, service := range []*scheduler.Service{&serviceA, &serviceB} {
+		go func(service *scheduler.Service) {
+			<-start
+			errorsByPublisher <- service.PublishOnce(ctx)
+		}(service)
+	}
+	close(start)
+	for i := 0; i < 2; i++ {
+		if publishErr := <-errorsByPublisher; publishErr != nil {
+			t.Fatal(publishErr)
+		}
+	}
+
+	reader := kafka.NewReader(kafka.ReaderConfig{Brokers: []string{broker}, Topic: topic, GroupID: "outbox-concurrent-reader", MinBytes: 1, MaxBytes: 1e6})
+	t.Cleanup(func() { _ = reader.Close() })
+	readContext, cancelRead := context.WithTimeout(ctx, 15*time.Second)
+	defer cancelRead()
+	seenEvents := make(map[string]bool, runCount*2)
+	eventsByRun := make(map[string][]string, runCount)
+	partitionByRun := make(map[string]int, runCount)
+	usedPartitions := make(map[int]bool)
+	for i := 0; i < runCount*2; i++ {
+		message, readErr := reader.FetchMessage(readContext)
+		if readErr != nil {
+			t.Fatal(readErr)
+		}
+		eventID := headerValue(message.Headers, "event_id")
+		if seenEvents[eventID] {
+			t.Fatalf("event %s was published more than once", eventID)
+		}
+		seenEvents[eventID] = true
+		var payload struct {
+			WorkflowRunID string `json:"workflow_run_id"`
+		}
+		if err = json.Unmarshal(message.Value, &payload); err != nil {
+			t.Fatal(err)
+		}
+		if string(message.Key) != payload.WorkflowRunID {
+			t.Fatalf("partition key=%q workflow_run_id=%q", message.Key, payload.WorkflowRunID)
+		}
+		if previous, ok := partitionByRun[payload.WorkflowRunID]; ok && previous != message.Partition {
+			t.Fatalf("workflow %s moved from partition %d to %d", payload.WorkflowRunID, previous, message.Partition)
+		}
+		partitionByRun[payload.WorkflowRunID] = message.Partition
+		usedPartitions[message.Partition] = true
+		eventsByRun[payload.WorkflowRunID] = append(eventsByRun[payload.WorkflowRunID], headerValue(message.Headers, "event_type"))
+	}
+	if len(usedPartitions) < 2 {
+		t.Fatalf("workflow keys used only %d Kafka partition", len(usedPartitions))
+	}
+	for runID, events := range eventsByRun {
+		if len(events) != 2 || events[0] != "workflow.run.created" || events[1] != "task.dispatch" {
+			t.Fatalf("workflow %s event order=%v", runID, events)
+		}
+	}
+	var unpublished, claimed int
+	if err = store.Pool.QueryRow(ctx, `SELECT count(*) FILTER (WHERE published_at IS NULL),count(*) FILTER (WHERE claim_token IS NOT NULL) FROM outbox_events`).Scan(&unpublished, &claimed); err != nil {
+		t.Fatal(err)
+	}
+	if unpublished != 0 || claimed != 0 {
+		t.Fatalf("outbox after concurrent publication: unpublished=%d claimed=%d", unpublished, claimed)
 	}
 }
 
@@ -1460,15 +1719,35 @@ func kafkaProxy(t *testing.T, ctx context.Context, broker *redpanda.Container) (
 	return net.JoinHostPort(host, port), proxy
 }
 
-func createTopic(t *testing.T, ctx context.Context, broker, topic string) {
+func createTopic(t *testing.T, ctx context.Context, broker, topic string, partitions ...int) {
 	t.Helper()
+	partitionCount := 1
+	if len(partitions) > 0 {
+		partitionCount = partitions[0]
+	}
 	connection, err := kafka.DialContext(ctx, "tcp", broker)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer connection.Close()
-	if err = connection.CreateTopics(kafka.TopicConfig{Topic: topic, NumPartitions: 1, ReplicationFactor: 1}); err != nil {
+	if err = connection.CreateTopics(kafka.TopicConfig{Topic: topic, NumPartitions: partitionCount, ReplicationFactor: 1}); err != nil {
 		t.Fatal(err)
+	}
+}
+
+type blockingPublisher struct {
+	started chan struct{}
+	release chan struct{}
+	once    sync.Once
+}
+
+func (p *blockingPublisher) Publish(ctx context.Context, _, _ []byte, _ map[string]string) error {
+	p.once.Do(func() { close(p.started) })
+	select {
+	case <-p.release:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
 	}
 }
 

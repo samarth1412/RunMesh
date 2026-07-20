@@ -1,9 +1,11 @@
 images:
-  controlPlane: {repository: ghcr.io/example/runmesh-control-plane, tag: latest, pullPolicy: IfNotPresent}
-  scheduler: {repository: ghcr.io/example/runmesh-scheduler, tag: latest, pullPolicy: IfNotPresent}
-  web: {repository: ghcr.io/example/runmesh-web, tag: latest, pullPolicy: IfNotPresent}
-  workerGo: {repository: ghcr.io/example/runmesh-worker-go, tag: latest, pullPolicy: IfNotPresent}
-  workerPython: {repository: ghcr.io/example/runmesh-worker-python, tag: latest, pullPolicy: IfNotPresent}
+  # v0.1.0 is prepared but not published. Override these tags until the release
+  # workflow has published the corresponding immutable images.
+  controlPlane: {repository: ghcr.io/samarth1412/runmesh-control-plane, tag: 0.1.0, pullPolicy: IfNotPresent}
+  scheduler: {repository: ghcr.io/samarth1412/runmesh-scheduler, tag: 0.1.0, pullPolicy: IfNotPresent}
+  web: {repository: ghcr.io/samarth1412/runmesh-web, tag: 0.1.0, pullPolicy: IfNotPresent}
+  workerGo: {repository: ghcr.io/samarth1412/runmesh-worker-go, tag: 0.1.0, pullPolicy: IfNotPresent}
+  workerPython: {repository: ghcr.io/samarth1412/runmesh-worker-python, tag: 0.1.0, pullPolicy: IfNotPresent}
 imagePullSecrets: []
 
 replicas: {controlPlane: 2, scheduler: 2, web: 2}
@@ -12,6 +14,9 @@ config:
   devAuth: false
   kafkaBrokers: "kafka.example.internal:9092"
   kafkaTopic: runmesh.tasks
+  outboxBatchSize: 100
+  outboxClaimTTL: 30s
+  outboxPublishTimeout: 10s
   oidcIssuer: "https://identity.example.com/realms/runmesh"
   oidcAudience: runmesh-web
   oidcJwksURL: "https://identity.example.com/realms/runmesh/protocol/openid-connect/certs"
@@ -49,6 +54,7 @@ workerPools:
   - name: default-go
     enabled: true
     type: go
+    groupID: runmesh-workers
     replicas: 2
     image: {repository: "", tag: "", pullPolicy: ""}
     credentialSecretName: ""

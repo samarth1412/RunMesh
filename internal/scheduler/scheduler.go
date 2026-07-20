@@ -4,17 +4,18 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"log/slog"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/robfig/cron/v3"
-	"github.com/runmesh/runmesh/internal/live"
-	"github.com/runmesh/runmesh/internal/messaging"
-	"github.com/runmesh/runmesh/internal/storage"
-	"github.com/runmesh/runmesh/internal/tracecontext"
-	"github.com/runmesh/runmesh/internal/workflow"
+	"github.com/samarth1412/RunMesh/internal/live"
+	"github.com/samarth1412/RunMesh/internal/storage"
+	"github.com/samarth1412/RunMesh/internal/tracecontext"
+	"github.com/samarth1412/RunMesh/internal/workflow"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/trace"
@@ -22,11 +23,24 @@ import (
 
 type Service struct {
 	Store                            *storage.Store
-	Publisher                        *messaging.Publisher
+	Publisher                        EventPublisher
 	Live                             *live.Broker
 	Published                        *prometheus.CounterVec
 	ScheduleInterval, OutboxInterval time.Duration
+	OutboxBatchSize                  int
+	OutboxClaimTTL                   time.Duration
+	OutboxPublishTimeout             time.Duration
 }
+
+type EventPublisher interface {
+	Publish(context.Context, []byte, []byte, map[string]string) error
+}
+
+const (
+	defaultOutboxBatchSize      = 100
+	defaultOutboxClaimTTL       = 30 * time.Second
+	defaultOutboxPublishTimeout = 10 * time.Second
+)
 
 func (s *Service) Run(ctx context.Context) error {
 	errc := make(chan error, 2)
@@ -243,75 +257,122 @@ func (s *Service) runOutbox(ctx context.Context) error {
 	}
 }
 func (s *Service) publishBatch(ctx context.Context) error {
-	tx, err := s.Store.Pool.Begin(ctx)
-	if err != nil {
-		return err
+	for {
+		published, err := s.publishClaimedBatch(ctx)
+		if err != nil {
+			return err
+		}
+		if published == 0 {
+			return nil
+		}
 	}
-	defer tx.Rollback(ctx)
-	rows, err := tx.Query(ctx, `SELECT o.id,o.aggregate_id,o.event_type,o.payload,COALESCE(o.trace_parent,''),o.created_at,
+}
+
+func (s *Service) publishClaimedBatch(ctx context.Context) (int, error) {
+	batchSize := s.OutboxBatchSize
+	if batchSize <= 0 {
+		batchSize = defaultOutboxBatchSize
+	}
+	claimTTL := s.OutboxClaimTTL
+	if claimTTL <= 0 {
+		claimTTL = defaultOutboxClaimTTL
+	}
+	publishTimeout := s.OutboxPublishTimeout
+	if publishTimeout <= 0 {
+		publishTimeout = defaultOutboxPublishTimeout
+	}
+	if publishTimeout >= claimTTL {
+		return 0, fmt.Errorf("outbox publish timeout %s must be shorter than claim TTL %s", publishTimeout, claimTTL)
+	}
+
+	claimToken := uuid.NewString()
+	rows, err := s.Store.Pool.Query(ctx, `WITH candidates AS (
+		SELECT o.id FROM outbox_events o
+		WHERE o.published_at IS NULL
+		  AND (o.claim_token IS NULL OR o.claim_expires_at<=now())
+		  AND NOT EXISTS (
+			SELECT 1 FROM outbox_events earlier
+			WHERE earlier.ordering_key=o.ordering_key
+			  AND earlier.published_at IS NULL
+			  AND (earlier.created_at,earlier.id)<(o.created_at,o.id)
+		  )
+		ORDER BY o.created_at,o.id
+		FOR UPDATE OF o SKIP LOCKED
+		LIMIT $1
+	)
+	UPDATE outbox_events o
+	SET claim_token=$2,claim_expires_at=now()+make_interval(secs => $3),publish_attempts=publish_attempts+1
+	FROM candidates c
+	WHERE o.id=c.id
+	RETURNING o.id,o.aggregate_id,o.ordering_key,o.event_type,o.payload,COALESCE(o.trace_parent,''),o.created_at,
 		COALESCE(
 			(SELECT tenant_id::text FROM workflow_runs WHERE id=o.aggregate_id AND o.aggregate_type='workflow_run'),
 			(SELECT r.tenant_id::text FROM task_runs t JOIN workflow_runs r ON r.id=t.workflow_run_id WHERE t.id=o.aggregate_id AND o.aggregate_type='task_run'),
 			(SELECT tenant_id::text FROM workflow_definitions WHERE id=o.aggregate_id AND o.aggregate_type='workflow_definition'),
 			''
-		)
-		FROM outbox_events o WHERE o.published_at IS NULL ORDER BY o.created_at FOR UPDATE OF o SKIP LOCKED LIMIT 100`)
+		)`, batchSize, claimToken, claimTTL.Seconds())
 	if err != nil {
-		return err
+		return 0, err
 	}
 	type event struct {
-		id, aggregateID, eventType, traceParent, tenantID string
-		payload                                           []byte
-		createdAt                                         time.Time
+		id, aggregateID, orderingKey, eventType, traceParent, tenantID string
+		payload                                                        []byte
+		createdAt                                                      time.Time
 	}
 	var events []event
 	for rows.Next() {
 		var e event
-		if err = rows.Scan(&e.id, &e.aggregateID, &e.eventType, &e.payload, &e.traceParent, &e.createdAt, &e.tenantID); err != nil {
+		if err = rows.Scan(&e.id, &e.aggregateID, &e.orderingKey, &e.eventType, &e.payload, &e.traceParent, &e.createdAt, &e.tenantID); err != nil {
 			rows.Close()
-			return err
+			return 0, err
 		}
 		events = append(events, e)
 	}
+	if err = rows.Err(); err != nil {
+		rows.Close()
+		return 0, err
+	}
 	rows.Close()
+
+	releaseClaims := func() {
+		releaseContext, cancel := context.WithTimeout(context.WithoutCancel(ctx), time.Second)
+		defer cancel()
+		if _, releaseErr := s.Store.Pool.Exec(releaseContext, `UPDATE outbox_events SET claim_token=NULL,claim_expires_at=NULL WHERE claim_token=$1 AND published_at IS NULL`, claimToken); releaseErr != nil {
+			slog.Warn("outbox claim release failed", "claim_token", claimToken, "error", releaseErr)
+		}
+	}
 	for _, e := range events {
-		var envelope struct {
-			WorkflowRunID string `json:"workflow_run_id"`
-		}
-		_ = json.Unmarshal(e.payload, &envelope)
-		key := e.aggregateID
-		if envelope.WorkflowRunID != "" {
-			key = envelope.WorkflowRunID
-		}
 		publishContext := tracecontext.IntoContext(ctx, e.traceParent)
+		publishContext, cancel := context.WithTimeout(publishContext, publishTimeout)
 		publishContext, span := otel.Tracer("runmesh/scheduler").Start(publishContext, "outbox.publish", trace.WithAttributes(attribute.String("tenant_id", e.tenantID), attribute.String("event.id", e.id), attribute.String("event.type", e.eventType)))
-		if err = s.Publisher.Publish(publishContext, []byte(key), e.payload, map[string]string{"event_type": e.eventType, "event_id": e.id}); err != nil {
+		if err = s.Publisher.Publish(publishContext, []byte(e.orderingKey), e.payload, map[string]string{"event_type": e.eventType, "event_id": e.id}); err != nil {
 			span.RecordError(err)
 			span.End()
-			return err
+			cancel()
+			releaseClaims()
+			return 0, err
 		}
 		span.End()
-		if _, err = tx.Exec(ctx, `UPDATE outbox_events SET published_at=now() WHERE id=$1 AND published_at IS NULL`, e.id); err != nil {
-			return err
+		cancel()
+		command, ackErr := s.Store.Pool.Exec(ctx, `UPDATE outbox_events SET published_at=now(),claim_token=NULL,claim_expires_at=NULL WHERE id=$1 AND published_at IS NULL AND claim_token=$2`, e.id, claimToken)
+		if ackErr != nil {
+			releaseClaims()
+			return 0, ackErr
 		}
-	}
-	if err = tx.Commit(ctx); err != nil {
-		return err
-	}
-	if s.Published != nil {
-		for _, e := range events {
+		if command.RowsAffected() != 1 {
+			releaseClaims()
+			return 0, fmt.Errorf("outbox claim lost before acknowledgement: event %s", e.id)
+		}
+		if s.Published != nil {
 			s.Published.WithLabelValues(e.tenantID, e.eventType).Inc()
 		}
-	}
-	if s.Live != nil {
-		for _, e := range events {
+		if s.Live != nil {
 			if liveErr := s.Live.Publish(ctx, e.tenantID, live.Event{ID: e.id, Type: e.eventType, AggregateID: e.aggregateID, Payload: e.payload, OccurredAt: e.createdAt.UTC().Format(time.RFC3339Nano)}); liveErr != nil {
 				slog.Warn("live notification unavailable", "tenant_id", e.tenantID, "event_id", e.id, "event_type", e.eventType, "error", liveErr)
-				break
 			}
 		}
 	}
-	return nil
+	return len(events), nil
 }
 func mustJSON(v any) []byte {
 	b, err := json.Marshal(v)

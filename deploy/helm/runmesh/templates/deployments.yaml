@@ -148,6 +148,8 @@ spec:
             {{- toYaml $.Values.containerSecurityContext | nindent 12 }}
           envFrom: [{configMapRef: {name: {{ include "runmesh.name" $ }}}}]
           env:
+            - name: RUNMESH_KAFKA_GROUP_ID
+              value: {{ $pool.groupID | quote }}
             - name: RUNMESH_INTERNAL_TOKEN
               valueFrom:
                 secretKeyRef:

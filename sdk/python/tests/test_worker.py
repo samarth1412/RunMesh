@@ -98,3 +98,25 @@ async def test_worker_heartbeat_payload_excludes_task_worker_id() -> None:
     )
 
     assert session.payload == payload
+
+
+async def test_unsupported_handler_is_not_leased() -> None:
+    class Consumer:
+        committed = False
+
+        async def commit(self) -> None:
+            self.committed = True
+
+    class Message:
+        value = b'{"task_run_id":"task-1","handler":"documents.unknown"}'
+        headers: list[tuple[str, bytes]] = []
+
+    worker = Worker("localhost:7001", "token", worker_id="worker-1")
+    consumer = Consumer()
+    await worker._process(
+        cast(aiohttp.ClientSession, object()),
+        cast(Any, consumer),
+        cast(Any, Message()),
+    )
+    assert consumer.committed
+    assert worker._grpc_stub is None

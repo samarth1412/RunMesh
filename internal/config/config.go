@@ -19,6 +19,9 @@ type Config struct {
 	LeaseDuration          time.Duration
 	SchedulerInterval      time.Duration
 	OutboxInterval         time.Duration
+	OutboxBatchSize        int
+	OutboxClaimTTL         time.Duration
+	OutboxPublishTimeout   time.Duration
 	DevAuth                bool
 	DevTenantID            string
 	DevUserID              string
@@ -90,6 +93,15 @@ func Load() (Config, error) {
 	if c.OutboxInterval, err = envDuration("RUNMESH_OUTBOX_INTERVAL", 250*time.Millisecond); err != nil {
 		return Config{}, err
 	}
+	if c.OutboxBatchSize, err = envInt("RUNMESH_OUTBOX_BATCH_SIZE", 100); err != nil {
+		return Config{}, err
+	}
+	if c.OutboxClaimTTL, err = envDuration("RUNMESH_OUTBOX_CLAIM_TTL", 30*time.Second); err != nil {
+		return Config{}, err
+	}
+	if c.OutboxPublishTimeout, err = envDuration("RUNMESH_OUTBOX_PUBLISH_TIMEOUT", 10*time.Second); err != nil {
+		return Config{}, err
+	}
 	if c.ArtifactPresignExpiry, err = envDuration("RUNMESH_ARTIFACT_PRESIGN_EXPIRY", 15*time.Minute); err != nil {
 		return Config{}, err
 	}
@@ -104,6 +116,9 @@ func Load() (Config, error) {
 	}
 	if c.RateLimitRate <= 0 || c.RateLimitBurst <= 0 {
 		return Config{}, fmt.Errorf("rate limit rate and burst must be positive")
+	}
+	if c.OutboxBatchSize <= 0 || c.OutboxClaimTTL <= 0 || c.OutboxPublishTimeout <= 0 || c.OutboxPublishTimeout >= c.OutboxClaimTTL {
+		return Config{}, fmt.Errorf("outbox batch size must be positive and publish timeout must be shorter than claim TTL")
 	}
 	if !c.DevAuth && c.RateLimitFailOpen {
 		return Config{}, fmt.Errorf("RUNMESH_RATE_LIMIT_FAIL_OPEN cannot be enabled outside development")

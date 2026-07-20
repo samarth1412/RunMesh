@@ -10,7 +10,7 @@ test('Keycloak login, workflow execution, live updates, cancellation, and dead-l
   await expect(page.getByRole('heading', { name: 'Workflows' })).toBeVisible()
   await page.locator('.workflow-card').filter({ hasText: await workflowName }).getByRole('button', { name: 'Launch' }).click()
   await expect(page.getByText('RUN DETAIL')).toBeVisible()
-  await expect(page.locator('.drawer').getByText('SUCCEEDED').first()).toBeVisible({ timeout: 15_000 })
+  await expect(page.locator('.drawer .run-meta .status')).toHaveText('SUCCEEDED', { timeout: 15_000 })
   await page.locator('.drawer .icon-button').click()
 
   const bearer = await token(request)

@@ -12,7 +12,13 @@ jobs:
         with: {go-version: "1.25.x", cache: true}
       - run: test -z "$(gofmt -l cmd internal sdk/go gen tests/integration)"
       - run: go vet ./...
-      - run: go test -race -coverprofile=coverage.out ./cmd/... ./internal/... ./sdk/go/...
+      - run: go test -race -covermode=atomic -coverprofile=coverage.out ./cmd/... ./internal/... ./sdk/go/...
+      - run: scripts/check-go-coverage.sh coverage.out 10
+      - run: go test -coverprofile=workflow-coverage.out ./internal/workflow && scripts/check-go-coverage.sh workflow-coverage.out 70
+      - run: go test -coverprofile=auth-coverage.out ./internal/auth && scripts/check-go-coverage.sh auth-coverage.out 40
+      - run: go test -coverprofile=live-coverage.out ./internal/live && scripts/check-go-coverage.sh live-coverage.out 70
+      - uses: actions/upload-artifact@v4
+        with: {name: go-coverage, path: "*-coverage.out"}
   python:
     runs-on: ubuntu-latest
     steps:
@@ -22,6 +28,8 @@ jobs:
       - run: pip install -e 'sdk/python[dev]'
       - run: ruff check sdk/python examples
       - run: cd sdk/python && mypy runmesh && pytest --junitxml=../../pytest.xml
+      - uses: actions/upload-artifact@v4
+        with: {name: python-coverage, path: sdk/python/coverage.xml}
   web:
     runs-on: ubuntu-latest
     defaults: {run: {working-directory: web}}
@@ -32,8 +40,10 @@ jobs:
       - run: npm ci
       - run: npm run lint
       - run: npm run build
-      - run: npm test -- --run
+      - run: npm run test:coverage
       - run: npm audit --audit-level=high
+      - uses: actions/upload-artifact@v4
+        with: {name: web-coverage, path: web/coverage/coverage-summary.json}
   protobuf:
     runs-on: ubuntu-latest
     steps:
@@ -68,16 +78,29 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
         with: {go-version: "1.25.x", cache: true}
-      - run: go test -tags=integration -count=1 -timeout=10m ./tests/integration
+      - run: go test -tags=integration -count=1 -timeout=15m ./tests/integration
   containers:
     runs-on: ubuntu-latest
     needs: [go, python, web, protobuf, integration]
-    strategy: {matrix: {service: [control-plane, scheduler, worker-go]}}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - {service: control-plane, dockerfile: Dockerfile, build-args: "SERVICE=control-plane"}
+          - {service: scheduler, dockerfile: Dockerfile, build-args: "SERVICE=scheduler"}
+          - {service: worker-go, dockerfile: Dockerfile, build-args: "SERVICE=worker-go"}
+          - {service: worker-python, dockerfile: sdk/python/Dockerfile, build-args: ""}
+          - {service: web, dockerfile: web/Dockerfile, build-args: "WEB_DEVELOPMENT_MODE=false"}
     steps:
       - uses: actions/checkout@v4
       - uses: docker/setup-buildx-action@v3
       - uses: docker/build-push-action@v6
-        with: {context: ., build-args: "SERVICE=${{ matrix.service }}", tags: "runmesh/${{ matrix.service }}:${{ github.sha }}", load: true}
+        with:
+          context: .
+          file: ${{ matrix.dockerfile }}
+          build-args: ${{ matrix.build-args }}
+          tags: runmesh/${{ matrix.service }}:${{ github.sha }}
+          load: true
       - uses: aquasecurity/trivy-action@v0.36.0
         with: {image-ref: "runmesh/${{ matrix.service }}:${{ github.sha }}", severity: CRITICAL, exit-code: "1", ignore-unfixed: true}
   kind-upgrade:

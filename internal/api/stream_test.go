@@ -11,8 +11,8 @@ import (
 	"github.com/alicebob/miniredis/v2"
 	"github.com/gorilla/websocket"
 	"github.com/prometheus/client_golang/prometheus"
-	"github.com/runmesh/runmesh/internal/auth"
-	"github.com/runmesh/runmesh/internal/live"
+	"github.com/samarth1412/RunMesh/internal/auth"
+	"github.com/samarth1412/RunMesh/internal/live"
 )
 
 func TestAuthenticatedTenantStream(t *testing.T) {

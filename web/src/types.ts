@@ -1,5 +1,6 @@
 export type TaskSpec = { handler: string; depends_on?: string[]; maximum_attempts?: number; timeout_seconds?: number }
 export type Workflow = { id: string; name: string; version: number; dag: { tasks: Record<string, TaskSpec> }; created_at: string }
-export type TaskRun = { id: string; task_key: string; handler: string; status: string; attempt_count: number; maximum_attempts: number; available_at: string }
+export type TaskAttempt = { attempt_number: number; worker_id: string; scheduled_at: string; executing_at?: string; started_at: string; ended_at?: string; exit_status?: string; error_type?: string; error_message?: string; trace_id?: string; artifact_uri?: string; log_artifact_uri?: string; artifact_download_url?: string; log_artifact_download_url?: string }
+export type TaskRun = { id: string; task_key: string; handler: string; status: string; attempt_count: number; maximum_attempts: number; available_at: string; lease_owner?: string; lease_expires_at?: string; depends_on?: string[]; attempts?: TaskAttempt[]; output_artifact_download_url?: string; log_artifact_download_url?: string }
 export type Run = { id: string; workflow_definition_id: string; workflow_version: number; status: string; idempotency_key: string; created_at: string; started_at?: string; completed_at?: string; tasks?: TaskRun[] }
 export type Worker = { worker_id: string; handlers: string[]; active_tasks: number; metadata: Record<string, string>; last_seen_at: string }

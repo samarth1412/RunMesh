@@ -7,11 +7,11 @@ import (
 	"strings"
 	"time"
 
-	runmeshv1 "github.com/runmesh/runmesh/gen/runmesh/v1"
-	"github.com/runmesh/runmesh/internal/artifact"
-	"github.com/runmesh/runmesh/internal/auth"
-	"github.com/runmesh/runmesh/internal/storage"
-	"github.com/runmesh/runmesh/internal/workflow"
+	runmeshv1 "github.com/samarth1412/RunMesh/gen/runmesh/v1"
+	"github.com/samarth1412/RunMesh/internal/artifact"
+	"github.com/samarth1412/RunMesh/internal/auth"
+	"github.com/samarth1412/RunMesh/internal/storage"
+	"github.com/samarth1412/RunMesh/internal/workflow"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/status"
@@ -29,10 +29,14 @@ type WorkerServer struct {
 
 func (s *WorkerServer) authorize(ctx context.Context) (auth.Principal, error) {
 	values := metadata.ValueFromIncomingContext(ctx, "authorization")
-	if len(values) != 1 {
+	if len(values) != 1 || !strings.HasPrefix(values[0], "Bearer ") {
 		return auth.Principal{}, status.Error(codes.Unauthenticated, "invalid worker credential")
 	}
-	principal, err := s.Authenticator.AuthenticateWorker(ctx, strings.TrimPrefix(values[0], "Bearer "))
+	token := strings.TrimSpace(strings.TrimPrefix(values[0], "Bearer "))
+	if token == "" {
+		return auth.Principal{}, status.Error(codes.Unauthenticated, "invalid worker credential")
+	}
+	principal, err := s.Authenticator.AuthenticateWorker(ctx, token)
 	if err != nil {
 		return auth.Principal{}, status.Error(codes.Unauthenticated, "invalid worker credential")
 	}
@@ -49,12 +53,12 @@ func (s *WorkerServer) authorizeTask(ctx context.Context, taskID string) error {
 	return nil
 }
 
-func (s *WorkerServer) principalForTask(ctx context.Context, taskID string) (auth.Principal, error) {
+func (s *WorkerServer) principalForActiveTask(ctx context.Context, taskID, workerID string) (auth.Principal, error) {
 	principal, err := s.authorize(ctx)
 	if err != nil {
 		return principal, err
 	}
-	if err = s.Store.TaskBelongsToTenant(ctx, taskID, principal.TenantID); err != nil {
+	if err = s.Store.ActiveTaskLeaseBelongsToWorker(ctx, taskID, principal.TenantID, workerID); err != nil {
 		return principal, rpcError(err)
 	}
 	return principal, nil
@@ -90,7 +94,7 @@ func (s *WorkerServer) Heartbeat(ctx context.Context, request *runmeshv1.Heartbe
 	return &runmeshv1.HeartbeatResponse{LeaseExpiresAt: timestamppb.New(expires), Cancelled: cancelled}, nil
 }
 func (s *WorkerServer) Complete(ctx context.Context, request *runmeshv1.CompleteRequest) (*runmeshv1.CompleteResponse, error) {
-	principal, err := s.principalForTask(ctx, request.TaskRunId)
+	principal, err := s.principalForActiveTask(ctx, request.TaskRunId, request.WorkerId)
 	if err != nil {
 		return nil, err
 	}
@@ -125,7 +129,7 @@ func (s *WorkerServer) CreateArtifactUpload(ctx context.Context, request *runmes
 	if s.Artifacts == nil {
 		return nil, status.Error(codes.Unavailable, "artifact storage is not configured")
 	}
-	principal, err := s.principalForTask(ctx, request.TaskRunId)
+	principal, err := s.principalForActiveTask(ctx, request.TaskRunId, request.WorkerId)
 	if err != nil {
 		return nil, err
 	}
@@ -140,7 +144,7 @@ func (s *WorkerServer) CompleteArtifactUpload(ctx context.Context, request *runm
 	if s.Artifacts == nil {
 		return nil, status.Error(codes.Unavailable, "artifact storage is not configured")
 	}
-	principal, err := s.principalForTask(ctx, request.TaskRunId)
+	principal, err := s.principalForActiveTask(ctx, request.TaskRunId, request.WorkerId)
 	if err != nil {
 		return nil, err
 	}
@@ -159,7 +163,7 @@ func (s *WorkerServer) GetArtifactDownload(ctx context.Context, request *runmesh
 	if s.Artifacts == nil {
 		return nil, status.Error(codes.Unavailable, "artifact storage is not configured")
 	}
-	principal, err := s.principalForTask(ctx, request.TaskRunId)
+	principal, err := s.principalForActiveTask(ctx, request.TaskRunId, request.WorkerId)
 	if err != nil {
 		return nil, err
 	}

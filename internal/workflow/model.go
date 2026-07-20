@@ -62,6 +62,25 @@ type TaskRun struct {
 	LogArtifactURI            *string         `json:"log_artifact_uri,omitempty"`
 	OutputArtifactDownloadURL string          `json:"output_artifact_download_url,omitempty"`
 	LogArtifactDownloadURL    string          `json:"log_artifact_download_url,omitempty"`
+	DependsOn                 []string        `json:"depends_on,omitempty"`
+	Attempts                  []TaskAttempt   `json:"attempts,omitempty"`
+}
+
+type TaskAttempt struct {
+	AttemptNumber          int        `json:"attempt_number"`
+	WorkerID               string     `json:"worker_id"`
+	ScheduledAt            time.Time  `json:"scheduled_at"`
+	ExecutingAt            *time.Time `json:"executing_at,omitempty"`
+	StartedAt              time.Time  `json:"started_at"`
+	EndedAt                *time.Time `json:"ended_at,omitempty"`
+	ExitStatus             string     `json:"exit_status,omitempty"`
+	ErrorType              string     `json:"error_type,omitempty"`
+	ErrorMessage           string     `json:"error_message,omitempty"`
+	TraceID                string     `json:"trace_id,omitempty"`
+	ArtifactURI            string     `json:"artifact_uri,omitempty"`
+	LogArtifactURI         string     `json:"log_artifact_uri,omitempty"`
+	ArtifactDownloadURL    string     `json:"artifact_download_url,omitempty"`
+	LogArtifactDownloadURL string     `json:"log_artifact_download_url,omitempty"`
 }
 
 type Event struct {

@@ -10,7 +10,7 @@ import (
 
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/redis/go-redis/v9"
-	"github.com/runmesh/runmesh/internal/auth"
+	"github.com/samarth1412/RunMesh/internal/auth"
 )
 
 const tokenBucketScript = `
