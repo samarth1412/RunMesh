@@ -14,3 +14,5 @@ __pycache__/
 *.tfstate.*
 *.pyc
 *.log
+web/test-results/
+web/playwright-results.xml

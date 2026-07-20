@@ -37,7 +37,7 @@ func main() {
 	}
 	defer shutdownTelemetry(context.Background())
 	brokers := strings.Split(env("RUNMESH_KAFKA_BROKERS", "localhost:19092"), ",")
-	workerID := env("RUNMESH_WORKER_ID", "go-worker-1")
+	workerID := env("RUNMESH_WORKER_ID", defaultWorkerID())
 	client := runmesh.NewClient(env("RUNMESH_ENDPOINT", "localhost:7001"), env("RUNMESH_INTERNAL_TOKEN", "local-development-token"), workerID)
 	defer client.Close()
 	reader := kafka.NewReader(kafka.ReaderConfig{Brokers: brokers, Topic: env("RUNMESH_KAFKA_TOPIC", "runmesh.tasks"), GroupID: "runmesh-workers", MinBytes: 1, MaxBytes: 10e6})
@@ -117,6 +117,17 @@ func execute(parent context.Context, client *runmesh.Client, id string) error {
 		output = map[string]any{"message": fmt.Sprintf("Hello, %v!", input["name"]), "worker": "go"}
 	case "examples.upper":
 		output = map[string]any{"text": strings.ToUpper(fmt.Sprint(input["text"])), "worker": "go"}
+	case "examples.slow":
+		delay := 200 * time.Millisecond
+		if value, ok := input["delay_ms"].(float64); ok && value >= 0 && value <= 30_000 {
+			delay = time.Duration(value) * time.Millisecond
+		}
+		select {
+		case <-time.After(delay):
+			output = map[string]any{"slept_ms": delay.Milliseconds(), "worker": "go"}
+		case <-ctx.Done():
+			return ctx.Err()
+		}
 	default:
 		err = fmt.Errorf("unsupported handler %q", task.Handler)
 		_, _ = client.Fail(parent, id, true, err)
@@ -133,7 +144,7 @@ func report(ctx context.Context, client *runmesh.Client) {
 	ticker := time.NewTicker(10 * time.Second)
 	defer ticker.Stop()
 	for {
-		if err := client.Report(ctx, []string{"examples.greet", "examples.upper"}, 0); err != nil {
+		if err := client.Report(ctx, []string{"examples.greet", "examples.upper", "examples.slow"}, 0); err != nil {
 			slog.Warn("worker heartbeat failed", "error", err)
 		}
 		select {
@@ -156,4 +167,12 @@ func env(key, fallback string) string {
 		return v
 	}
 	return fallback
+}
+
+func defaultWorkerID() string {
+	hostname, err := os.Hostname()
+	if err != nil || hostname == "" {
+		return "go-worker"
+	}
+	return "go-worker-" + hostname
 }

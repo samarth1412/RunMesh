@@ -29,17 +29,18 @@ const (
 )
 
 type Config struct {
-	Endpoint, Region, Bucket, AccessKey, SecretKey string
-	PathStyle, CreateBucket                        bool
-	PresignExpiry                                  time.Duration
+	Endpoint, PublicEndpoint, Region, Bucket, AccessKey, SecretKey string
+	PathStyle, CreateBucket                                        bool
+	PresignExpiry                                                  time.Duration
 }
 
 type Manager struct {
-	Store   *storage.Store
-	client  *s3.Client
-	presign *s3.PresignClient
-	bucket  string
-	expiry  time.Duration
+	Store           *storage.Store
+	client          *s3.Client
+	presign         *s3.PresignClient
+	internalPresign *s3.PresignClient
+	bucket          string
+	expiry          time.Duration
 }
 
 type Upload struct {
@@ -70,7 +71,18 @@ func New(ctx context.Context, store *storage.Store, cfg Config) (*Manager, error
 			o.BaseEndpoint = aws.String(strings.TrimRight(cfg.Endpoint, "/"))
 		}
 	})
-	m := &Manager{Store: store, client: client, presign: s3.NewPresignClient(client), bucket: cfg.Bucket, expiry: cfg.PresignExpiry}
+	presignClient := client
+	if cfg.PublicEndpoint != "" && strings.TrimRight(cfg.PublicEndpoint, "/") != strings.TrimRight(cfg.Endpoint, "/") {
+		presignClient = s3.NewFromConfig(awsCfg, func(o *s3.Options) {
+			o.UsePathStyle = cfg.PathStyle
+			o.BaseEndpoint = aws.String(strings.TrimRight(cfg.PublicEndpoint, "/"))
+		})
+	}
+	m := &Manager{
+		Store: store, client: client,
+		presign: s3.NewPresignClient(presignClient), internalPresign: s3.NewPresignClient(client),
+		bucket: cfg.Bucket, expiry: cfg.PresignExpiry,
+	}
 	if m.expiry == 0 {
 		m.expiry = 15 * time.Minute
 	}
@@ -97,6 +109,16 @@ func (m *Manager) ensureBucket(ctx context.Context) error {
 }
 
 func (m *Manager) CreateUpload(ctx context.Context, tenantID, userID, kind, contentType string, size int64, checksum string, taskRunID *string) (Upload, error) {
+	return m.createUpload(ctx, m.presign, tenantID, userID, kind, contentType, size, checksum, taskRunID)
+}
+
+// CreateInternalUpload signs against the service endpoint reachable by workers.
+// Browser/API callers use CreateUpload, which may use a separate public endpoint.
+func (m *Manager) CreateInternalUpload(ctx context.Context, tenantID, userID, kind, contentType string, size int64, checksum string, taskRunID *string) (Upload, error) {
+	return m.createUpload(ctx, m.internalPresign, tenantID, userID, kind, contentType, size, checksum, taskRunID)
+}
+
+func (m *Manager) createUpload(ctx context.Context, presigner *s3.PresignClient, tenantID, userID, kind, contentType string, size int64, checksum string, taskRunID *string) (Upload, error) {
 	ctx, span := otel.Tracer("runmesh/artifact").Start(ctx, "artifact.create_upload", trace.WithAttributes(attribute.String("tenant_id", tenantID), attribute.String("artifact.kind", kind), attribute.Int64("artifact.size", size)))
 	defer span.End()
 	if kind != "input" && kind != "output" && kind != "log" {
@@ -131,7 +153,7 @@ func (m *Manager) CreateUpload(ctx context.Context, tenantID, userID, kind, cont
 	if err != nil {
 		return Upload{}, err
 	}
-	request, err := m.presign.PresignPutObject(ctx, &s3.PutObjectInput{Bucket: aws.String(m.bucket), Key: aws.String(key), ContentType: aws.String(contentType)}, s3.WithPresignExpires(m.expiry))
+	request, err := presigner.PresignPutObject(ctx, &s3.PutObjectInput{Bucket: aws.String(m.bucket), Key: aws.String(key), ContentType: aws.String(contentType)}, s3.WithPresignExpires(m.expiry))
 	if err != nil {
 		return Upload{}, fmt.Errorf("sign artifact upload: %w", err)
 	}
@@ -179,6 +201,15 @@ func (m *Manager) Complete(ctx context.Context, tenantID, id string) (storage.Ar
 }
 
 func (m *Manager) Download(ctx context.Context, tenantID, idOrURI string) (Download, error) {
+	return m.download(ctx, m.presign, tenantID, idOrURI)
+}
+
+// DownloadInternal signs against the service endpoint reachable by workers.
+func (m *Manager) DownloadInternal(ctx context.Context, tenantID, idOrURI string) (Download, error) {
+	return m.download(ctx, m.internalPresign, tenantID, idOrURI)
+}
+
+func (m *Manager) download(ctx context.Context, presigner *s3.PresignClient, tenantID, idOrURI string) (Download, error) {
 	ctx, span := otel.Tracer("runmesh/artifact").Start(ctx, "artifact.sign_download", trace.WithAttributes(attribute.String("tenant_id", tenantID)))
 	defer span.End()
 	var a storage.Artifact
@@ -194,7 +225,7 @@ func (m *Manager) Download(ctx context.Context, tenantID, idOrURI string) (Downl
 	if a.Status != "READY" {
 		return Download{}, storage.ErrConflict
 	}
-	request, err := m.presign.PresignGetObject(ctx, &s3.GetObjectInput{Bucket: aws.String(m.bucket), Key: aws.String(a.ObjectKey)}, s3.WithPresignExpires(m.expiry))
+	request, err := presigner.PresignGetObject(ctx, &s3.GetObjectInput{Bucket: aws.String(m.bucket), Key: aws.String(a.ObjectKey)}, s3.WithPresignExpires(m.expiry))
 	if err != nil {
 		return Download{}, fmt.Errorf("sign artifact download: %w", err)
 	}

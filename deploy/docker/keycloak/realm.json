@@ -29,6 +29,31 @@
           "config": {"user.attribute": "runmesh_tenant_id", "claim.name": "runmesh_tenant_id", "jsonType.label": "String", "id.token.claim": "true", "access.token.claim": "true", "userinfo.token.claim": "true"}
         }
       ]
+    },
+    {
+      "clientId": "runmesh-expiring-test",
+      "name": "RunMesh Expiring Token Test",
+      "enabled": true,
+      "publicClient": true,
+      "directAccessGrantsEnabled": true,
+      "standardFlowEnabled": false,
+      "attributes": {"access.token.lifespan": "1"},
+      "protocolMappers": [
+        {
+          "name": "runmesh audience",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-audience-mapper",
+          "consentRequired": false,
+          "config": {"included.client.audience": "runmesh-web", "id.token.claim": "true", "access.token.claim": "true"}
+        },
+        {
+          "name": "tenant",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-usermodel-attribute-mapper",
+          "consentRequired": false,
+          "config": {"user.attribute": "runmesh_tenant_id", "claim.name": "runmesh_tenant_id", "jsonType.label": "String", "access.token.claim": "true"}
+        }
+      ]
     }
   ],
   "users": [
@@ -38,6 +63,28 @@
       "firstName": "Local",
       "lastName": "Administrator",
       "email": "admin@runmesh.local",
+      "enabled": true,
+      "emailVerified": true,
+      "attributes": {"runmesh_tenant_id": ["00000000-0000-0000-0000-000000000001"]},
+      "credentials": [{"type": "password", "value": "runmesh", "temporary": false}]
+    },
+    {
+      "id": "22222222-2222-2222-2222-222222222222",
+      "username": "tenant-admin",
+      "firstName": "Tenant",
+      "lastName": "Administrator",
+      "email": "tenant-admin@runmesh.local",
+      "enabled": true,
+      "emailVerified": true,
+      "attributes": {"runmesh_tenant_id": ["00000000-0000-0000-0000-000000000010"]},
+      "credentials": [{"type": "password", "value": "runmesh", "temporary": false}]
+    },
+    {
+      "id": "33333333-3333-3333-3333-333333333333",
+      "username": "viewer",
+      "firstName": "Validation",
+      "lastName": "Viewer",
+      "email": "viewer@runmesh.local",
       "enabled": true,
       "emailVerified": true,
       "attributes": {"runmesh_tenant_id": ["00000000-0000-0000-0000-000000000001"]},

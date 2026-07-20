@@ -1,0 +1,14 @@
+{
+  "checks": {
+    "active_workflows": true,
+    "api_requests": true,
+    "api_zero_failures": true,
+    "duplicate_delivery": true,
+    "duplicate_submission": true,
+    "lease_recovered": true,
+    "ten_thousand_tasks": true,
+    "worker_pool_terminated": true,
+    "zero_task_loss": true
+  },
+  "passed": true
+}

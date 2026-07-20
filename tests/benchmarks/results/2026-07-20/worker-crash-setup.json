@@ -1,0 +1,31 @@
+{
+  "idempotency_prefix": "validation-crash-20260720T054346Z",
+  "preparation_seconds": 0.699,
+  "run_count": 20,
+  "run_ids": [
+    "01929acc-d5be-462c-9da6-63167f5f4a62",
+    "379579c5-4949-40d7-b6ba-29d8a2bf6915",
+    "2d1e67b0-dd7f-4d04-ab28-8468b31f8af7",
+    "04076fbd-2e1e-44e6-83fb-80830a607a41",
+    "c0bdea8f-f626-4dc1-ab7f-67ce66800116",
+    "4b4752ed-4476-479a-b203-cfc947130bc8",
+    "a9e8083d-26d0-44a3-8efc-7bf8e578e4e5",
+    "febf0cf8-6071-455d-9835-97e0675306ca",
+    "a9b6096d-40cd-44d6-bf51-aa04960c107f",
+    "b67ff3b7-1a93-427e-99a6-7698bb6a2c88",
+    "aa2152b9-201a-478e-99ad-125f20981092",
+    "33a6b2f2-b026-4e15-accf-37dad32a2557",
+    "64aea572-825d-4e52-a9fa-fc68e0319db3",
+    "efc5539f-5b6e-4148-9990-8e8460b6c274",
+    "5bd90944-30b5-4601-b065-28d7008d343a",
+    "0fb995dc-31b3-459f-ab13-b4413138e487",
+    "c9c09f9c-c8e3-4142-9ce1-7049013e640c",
+    "946a5716-887d-4c6f-997a-4b4598acaed3",
+    "f5c8085e-c226-4c3b-9696-069e53853511",
+    "cd18784c-bb40-46d0-a610-5554f604ccda"
+  ],
+  "scenario": "worker_termination_and_lease_recovery",
+  "task_count": 10000,
+  "tasks_per_run": 500,
+  "workflow_id": "48379717-eafb-4138-a6c8-c06becd84c11"
+}
