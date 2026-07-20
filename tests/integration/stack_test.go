@@ -8,6 +8,8 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"sync"
@@ -16,8 +18,10 @@ import (
 
 	toxiproxyclient "github.com/Shopify/toxiproxy/v2/client"
 	"github.com/jackc/pgx/v5"
+	"github.com/prometheus/client_golang/prometheus"
 	"github.com/runmesh/runmesh/internal/auth"
 	"github.com/runmesh/runmesh/internal/messaging"
+	"github.com/runmesh/runmesh/internal/ratelimit"
 	"github.com/runmesh/runmesh/internal/scheduler"
 	"github.com/runmesh/runmesh/internal/storage"
 	"github.com/runmesh/runmesh/internal/workflow"
@@ -177,6 +181,103 @@ func TestProductionAPIKeysAndWorkerTenantIsolation(t *testing.T) {
 	}
 	if _, err = authenticator.Authenticate(ctx, rotatedToken); err == nil {
 		t.Fatal("revoked API key remained valid")
+	}
+}
+
+func TestTenantRateLimitAndRedisOutageRecovery(t *testing.T) {
+	ctx := context.Background()
+	store := postgresStore(t, ctx)
+	redisContainer := start(t, ctx, testcontainers.ContainerRequest{Image: "redis:7.4-alpine", ExposedPorts: []string{"6379/tcp"}, WaitingFor: wait.ForLog("Ready to accept connections").WithStartupTimeout(time.Minute)})
+	host, err := redisContainer.Host(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	port, err := redisContainer.MappedPort(ctx, "6379/tcp")
+	if err != nil {
+		t.Fatal(err)
+	}
+	registry := prometheus.NewRegistry()
+	limiter, err := ratelimit.New("redis://"+net.JoinHostPort(host, port.Port())+"/0", 2, 2, false, registry)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = limiter.Close() })
+
+	for i := 0; i < 2; i++ {
+		result, allowErr := limiter.Allow(ctx, "tenant-one")
+		if allowErr != nil || !result.Allowed {
+			t.Fatalf("tenant-one request %d: result=%+v err=%v", i, result, allowErr)
+		}
+	}
+	if result, allowErr := limiter.Allow(ctx, "tenant-one"); allowErr != nil || result.Allowed || result.RetryAfter <= 0 {
+		t.Fatalf("exhausted bucket: result=%+v err=%v", result, allowErr)
+	}
+	if result, allowErr := limiter.Allow(ctx, "tenant-two"); allowErr != nil || !result.Allowed {
+		t.Fatalf("separate tenant bucket: result=%+v err=%v", result, allowErr)
+	}
+	handlerCalled := false
+	handler := limiter.Middleware(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		handlerCalled = true
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	limitedRequest := httptest.NewRequest(http.MethodGet, "/v1/workflows", nil)
+	limitedRequest = limitedRequest.WithContext(auth.WithPrincipal(limitedRequest.Context(), auth.Principal{TenantID: "tenant-one"}))
+	limitedResponse := httptest.NewRecorder()
+	handler.ServeHTTP(limitedResponse, limitedRequest)
+	if limitedResponse.Code != http.StatusTooManyRequests || limitedResponse.Header().Get("Retry-After") == "" || handlerCalled {
+		t.Fatalf("limited response=%d retry_after=%q handler_called=%v", limitedResponse.Code, limitedResponse.Header().Get("Retry-After"), handlerCalled)
+	}
+
+	const tenantID = "00000000-0000-0000-0000-000000000001"
+	const userID = "00000000-0000-0000-0000-000000000001"
+	definition, err := store.CreateWorkflow(ctx, tenantID, userID, "redis-outage", workflow.DAG{Tasks: map[string]workflow.TaskSpec{"durable": {Handler: "test.durable"}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	provider, err := testcontainers.NewDockerProvider()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = provider.Close() })
+	if err = provider.Client().ContainerPause(ctx, redisContainer.GetContainerID()); err != nil {
+		t.Fatal(err)
+	}
+	paused := true
+	t.Cleanup(func() {
+		if paused {
+			_ = provider.Client().ContainerUnpause(context.Background(), redisContainer.GetContainerID())
+		}
+	})
+
+	handlerCalled = false
+	requestContext, cancelRequest := context.WithTimeout(auth.WithPrincipal(ctx, auth.Principal{TenantID: tenantID}), 500*time.Millisecond)
+	request := httptest.NewRequest(http.MethodGet, "/v1/workflows", nil).WithContext(requestContext)
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+	cancelRequest()
+	if response.Code != http.StatusServiceUnavailable || handlerCalled {
+		t.Fatalf("Redis outage response=%d handler_called=%v", response.Code, handlerCalled)
+	}
+	if _, err = store.GetWorkflow(ctx, tenantID, definition.ID); err != nil {
+		t.Fatalf("Redis outage affected authoritative workflow state: %v", err)
+	}
+
+	if err = provider.Client().ContainerUnpause(ctx, redisContainer.GetContainerID()); err != nil {
+		t.Fatal(err)
+	}
+	paused = false
+	recoveryContext, cancelRecovery := context.WithTimeout(ctx, 10*time.Second)
+	defer cancelRecovery()
+	for limiter.Ping(recoveryContext) != nil {
+		select {
+		case <-recoveryContext.Done():
+			t.Fatal("Redis rate limiter did not recover")
+		case <-time.After(100 * time.Millisecond):
+		}
+	}
+	result, err := limiter.Allow(ctx, "tenant-recovered")
+	if err != nil || !result.Allowed {
+		t.Fatalf("recovered limiter: result=%+v err=%v", result, err)
 	}
 }
 

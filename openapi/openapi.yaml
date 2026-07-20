@@ -3,6 +3,13 @@ info:
   title: RunMesh API
   version: 0.1.0
   description: Multi-tenant workflow orchestration API. Task execution is at-least-once.
+x-rate-limit:
+  policy: token-bucket
+  defaultRatePerSecond: 100
+  defaultBurst: 200
+  responses:
+    "429": Tenant bucket exhausted; inspect Retry-After and RateLimit-* headers
+    "503": Redis unavailable while production fail-closed enforcement is active
 servers:
   - url: http://localhost:8080
 security:

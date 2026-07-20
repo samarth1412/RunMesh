@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -24,18 +25,20 @@ import (
 const maxBodyBytes = 1 << 20
 
 type Server struct {
-	Store         *storage.Store
-	LeaseDuration time.Duration
-	Auth          func(http.Handler) http.Handler
-	WorkerAuth    func(http.Handler) http.Handler
-	APIKeyPepper  string
-	Requests      *prometheus.HistogramVec
+	Store           *storage.Store
+	LeaseDuration   time.Duration
+	Auth            func(http.Handler) http.Handler
+	WorkerAuth      func(http.Handler) http.Handler
+	RateLimit       func(http.Handler) http.Handler
+	DependencyReady func(context.Context) error
+	APIKeyPepper    string
+	Requests        *prometheus.HistogramVec
 }
 
-func New(store *storage.Store, lease time.Duration, authMiddleware, workerAuth func(http.Handler) http.Handler, apiKeyPepper string) *Server {
+func New(store *storage.Store, lease time.Duration, authMiddleware, workerAuth, rateLimit func(http.Handler) http.Handler, dependencyReady func(context.Context) error, apiKeyPepper string) *Server {
 	req := prometheus.NewHistogramVec(prometheus.HistogramOpts{Name: "api_request_duration_seconds", Help: "Public API request latency", Buckets: prometheus.DefBuckets}, []string{"method", "route", "status"})
 	prometheus.MustRegister(req)
-	return &Server{Store: store, LeaseDuration: lease, Auth: authMiddleware, WorkerAuth: workerAuth, APIKeyPepper: apiKeyPepper, Requests: req}
+	return &Server{Store: store, LeaseDuration: lease, Auth: authMiddleware, WorkerAuth: workerAuth, RateLimit: rateLimit, DependencyReady: dependencyReady, APIKeyPepper: apiKeyPepper, Requests: req}
 }
 
 func (s *Server) Handler() http.Handler {
@@ -61,7 +64,11 @@ func (s *Server) Handler() http.Handler {
 	public.HandleFunc("POST /v1/api-keys", auth.RequireHumanRole("admin", s.createAPIKey))
 	public.HandleFunc("POST /v1/api-keys/{id}/rotate", auth.RequireHumanRole("admin", s.rotateAPIKey))
 	public.HandleFunc("DELETE /v1/api-keys/{id}", auth.RequireHumanRole("admin", s.revokeAPIKey))
-	root.Handle("/v1/", s.Auth(s.instrument(public)))
+	publicHandler := s.instrument(public)
+	if s.RateLimit != nil {
+		publicHandler = s.RateLimit(publicHandler)
+	}
+	root.Handle("/v1/", s.Auth(publicHandler))
 	internal := http.NewServeMux()
 	internal.HandleFunc("POST /internal/v1/tasks/{id}/lease", s.lease)
 	internal.HandleFunc("POST /internal/v1/tasks/{id}/start", s.start)
@@ -508,6 +515,12 @@ func (s *Server) ready(w http.ResponseWriter, r *http.Request) {
 	if err := s.Store.Ping(ctx); err != nil {
 		writeError(w, 503, "database unavailable")
 		return
+	}
+	if s.DependencyReady != nil {
+		if err := s.DependencyReady(ctx); err != nil {
+			writeError(w, 503, "rate limiter unavailable")
+			return
+		}
 	}
 	writeJSON(w, 200, map[string]string{"status": "ready"})
 }
