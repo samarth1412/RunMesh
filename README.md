@@ -22,6 +22,10 @@ Large inputs, outputs, and structured task logs use tenant-owned S3/MinIO artifa
 
 The dashboard signs in through the bundled Keycloak realm. Use `admin` / `runmesh`. The control plane verifies the resulting JWT and resolves tenant membership and role from PostgreSQL.
 
+Dashboard state refreshes immediately from the authenticated, tenant-scoped `/v1/stream` WebSocket. Notifications are intentionally non-durable: clients re-read PostgreSQL-backed API state after each event and retain a 15-second polling fallback while Redis or the connection is unavailable.
+
+Prometheus scrapes the control plane, scheduler, OpenTelemetry collector, and Redpanda. Grafana provisions platform overview, scheduler, worker, Kafka lag, workflow failure, and tenant usage dashboards plus actionable alerts from `deploy/docker/prometheus-rules.yaml`. Application logs are JSON and include service, tenant, workflow/task, trace, and span identifiers when available.
+
 ## Quick start
 
 ```bash

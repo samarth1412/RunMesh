@@ -87,7 +87,21 @@ func (a *Authenticator) authenticateRequest(r *http.Request) (Principal, error) 
 		principal.Kind = "development"
 		return principal, nil
 	}
-	return a.Authenticate(r.Context(), bearer(r.Header.Get("Authorization")))
+	token := bearer(r.Header.Get("Authorization"))
+	if token == "" && r.URL.Path == "/v1/stream" {
+		token = webSocketBearer(r.Header.Get("Sec-WebSocket-Protocol"))
+	}
+	return a.Authenticate(r.Context(), token)
+}
+
+func webSocketBearer(protocols string) string {
+	for _, protocol := range strings.Split(protocols, ",") {
+		protocol = strings.TrimSpace(protocol)
+		if strings.HasPrefix(protocol, "bearer.") {
+			return strings.TrimPrefix(protocol, "bearer.")
+		}
+	}
+	return ""
 }
 
 func (a *Authenticator) Authenticate(ctx context.Context, raw string) (Principal, error) {

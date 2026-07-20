@@ -16,6 +16,9 @@ import (
 	"github.com/runmesh/runmesh/internal/tracecontext"
 	runmesh "github.com/runmesh/runmesh/sdk/go"
 	"github.com/segmentio/kafka-go"
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/trace"
 )
 
 type dispatch struct {
@@ -24,6 +27,7 @@ type dispatch struct {
 }
 
 func main() {
+	telemetry.ConfigureLogging("runmesh-worker-go")
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 	shutdownTelemetry, err := telemetry.Setup(ctx, "runmesh-worker-go")
@@ -69,6 +73,8 @@ func main() {
 	}
 }
 func execute(parent context.Context, client *runmesh.Client, id string) error {
+	parent, span := otel.Tracer("runmesh/worker").Start(parent, "task.execute", trace.WithAttributes(attribute.String("task_run_id", id)))
+	defer span.End()
 	task, err := client.Lease(parent, id)
 	if err != nil {
 		return err

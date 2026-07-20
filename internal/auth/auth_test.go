@@ -67,3 +67,12 @@ func TestAPIKeyFormatAndHash(t *testing.T) {
 		t.Fatalf("rotated token did not preserve id: %q", rotated)
 	}
 }
+
+func TestWebSocketBearer(t *testing.T) {
+	if got := webSocketBearer("runmesh, bearer.header.payload.signature"); got != "header.payload.signature" {
+		t.Fatalf("token=%q", got)
+	}
+	if got := webSocketBearer("runmesh"); got != "" {
+		t.Fatalf("unexpected token=%q", got)
+	}
+}

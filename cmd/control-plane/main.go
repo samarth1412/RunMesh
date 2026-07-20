@@ -16,6 +16,7 @@ import (
 	"github.com/runmesh/runmesh/internal/artifact"
 	"github.com/runmesh/runmesh/internal/auth"
 	"github.com/runmesh/runmesh/internal/config"
+	"github.com/runmesh/runmesh/internal/live"
 	"github.com/runmesh/runmesh/internal/ratelimit"
 	workerrpc "github.com/runmesh/runmesh/internal/rpc"
 	"github.com/runmesh/runmesh/internal/storage"
@@ -26,6 +27,7 @@ import (
 )
 
 func main() {
+	telemetry.ConfigureLogging("runmesh-control-plane")
 	if len(os.Args) > 1 && os.Args[1] == "--healthcheck" {
 		client := http.Client{Timeout: 2 * time.Second}
 		response, err := client.Get("http://127.0.0.1:8080/health/ready")
@@ -74,11 +76,18 @@ func main() {
 		os.Exit(1)
 	}
 	defer limiter.Close()
+	liveBroker, err := live.New(cfg.RedisURL, prometheus.DefaultRegisterer)
+	if err != nil {
+		slog.Error("live notification broker", "error", err)
+		os.Exit(1)
+	}
+	defer liveBroker.Close()
 	var redisReady func(context.Context) error
 	if !cfg.RateLimitFailOpen {
 		redisReady = limiter.Ping
 	}
 	server := api.New(store, cfg.LeaseDuration, authenticator.Middleware, authenticator.WorkerMiddleware, limiter.Middleware, redisReady, cfg.APIKeyPepper, artifactManager)
+	server.Live = liveBroker
 	grpcListener, err := net.Listen("tcp", cfg.GRPCAddr)
 	if err != nil {
 		slog.Error("gRPC listener", "error", err)

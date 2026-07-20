@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { Activity, AlertTriangle, Boxes, Braces, ChevronRight, CirclePlay, Clock3, GitBranch, LayoutDashboard, Plus, Radio, RefreshCw, Search, Server, Workflow as WorkflowIcon, X } from 'lucide-react'
-import { api } from './api'
+import { api, subscribeToEvents } from './api'
 import type { Run, TaskRun, Worker, Workflow } from './types'
 
 type Page = 'Overview' | 'Workflows' | 'Workers' | 'Dead letter'
@@ -16,6 +16,7 @@ export default function App() {
   const [selected, setSelected] = useState<Run | null>(null)
   const [error, setError] = useState('')
   const [busy, setBusy] = useState(false)
+  const [streamConnected, setStreamConnected] = useState(false)
 
   const selectedId = selected?.id
   const refresh = useCallback(async () => {
@@ -26,7 +27,19 @@ export default function App() {
     } catch (e) { setError(e instanceof Error ? e.message : 'Unable to reach control plane') }
   }, [selectedId])
 
-  useEffect(() => { const initial = window.setTimeout(() => void refresh(), 0); const id = window.setInterval(() => void refresh(), 2000); return () => { clearTimeout(initial); clearInterval(id) } }, [refresh])
+  useEffect(() => {
+    const initial = window.setTimeout(() => void refresh(), 0)
+    const fallback = window.setInterval(() => void refresh(), 15_000)
+    let refreshTimer: number | undefined
+    const unsubscribe = subscribeToEvents(() => {
+      if (refreshTimer !== undefined) window.clearTimeout(refreshTimer)
+      refreshTimer = window.setTimeout(() => void refresh(), 150)
+    }, setStreamConnected)
+    return () => {
+      clearTimeout(initial); clearInterval(fallback); unsubscribe()
+      if (refreshTimer !== undefined) clearTimeout(refreshTimer)
+    }
+  }, [refresh])
   const create = async () => { setBusy(true); try { await api.createSample(); await refresh(); setPage('Workflows') } catch (e) { setError(String(e)) } finally { setBusy(false) } }
   const launch = async (id: string) => { setBusy(true); try { const run = await api.launch(id); setSelected(await api.run(run.id)); await refresh() } catch (e) { setError(String(e)) } finally { setBusy(false) } }
   const stats = useMemo(() => ({ active: runs.filter(r => !terminal.has(r.status)).length, succeeded: runs.filter(r => r.status === 'SUCCEEDED').length, failed: runs.filter(r => r.status === 'FAILED').length }), [runs])
@@ -36,7 +49,7 @@ export default function App() {
       <div className="brand"><div className="mark"><GitBranch size={19}/></div><span>RunMesh</span></div>
       <div className="workspace"><div className="workspace-avatar">LD</div><div><small>WORKSPACE</small><strong>Local Development</strong></div><ChevronRight size={15}/></div>
       <nav>{nav.map(([label, Icon]) => <button key={label} className={page === label ? 'active' : ''} onClick={() => setPage(label)}><Icon size={17}/><span>{label}</span>{label === 'Dead letter' && dead.length > 0 && <em>{dead.length}</em>}</button>)}</nav>
-      <div className="aside-bottom"><span className="system-dot"/> All systems operational<small>Control plane connected</small></div>
+      <div className="aside-bottom"><span className="system-dot"/> {streamConnected ? 'Live updates connected' : 'Live updates reconnecting'}<small>{streamConnected ? 'Tenant event stream active' : '15s polling fallback active'}</small></div>
     </aside>
     <main>
       <header><div><p>OPERATIONS / {page.toUpperCase()}</p><h1>{page}</h1></div><div className="header-actions"><label className="search"><Search size={16}/><input placeholder="Search runs..."/></label><button className="icon-button" onClick={() => void refresh()}><RefreshCw size={17}/></button><button className="primary" onClick={create} disabled={busy}><Plus size={17}/> New workflow</button></div></header>

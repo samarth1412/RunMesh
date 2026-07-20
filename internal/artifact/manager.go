@@ -17,6 +17,9 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/google/uuid"
 	"github.com/runmesh/runmesh/internal/storage"
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/trace"
 )
 
 const (
@@ -94,6 +97,8 @@ func (m *Manager) ensureBucket(ctx context.Context) error {
 }
 
 func (m *Manager) CreateUpload(ctx context.Context, tenantID, userID, kind, contentType string, size int64, checksum string, taskRunID *string) (Upload, error) {
+	ctx, span := otel.Tracer("runmesh/artifact").Start(ctx, "artifact.create_upload", trace.WithAttributes(attribute.String("tenant_id", tenantID), attribute.String("artifact.kind", kind), attribute.Int64("artifact.size", size)))
+	defer span.End()
 	if kind != "input" && kind != "output" && kind != "log" {
 		return Upload{}, fmt.Errorf("invalid artifact kind")
 	}
@@ -140,6 +145,8 @@ func (m *Manager) CreateUpload(ctx context.Context, tenantID, userID, kind, cont
 }
 
 func (m *Manager) Complete(ctx context.Context, tenantID, id string) (storage.Artifact, error) {
+	ctx, span := otel.Tracer("runmesh/artifact").Start(ctx, "artifact.complete", trace.WithAttributes(attribute.String("tenant_id", tenantID), attribute.String("artifact.id", id)))
+	defer span.End()
 	a, err := m.Store.GetArtifact(ctx, tenantID, id)
 	if err != nil {
 		return a, err
@@ -172,6 +179,8 @@ func (m *Manager) Complete(ctx context.Context, tenantID, id string) (storage.Ar
 }
 
 func (m *Manager) Download(ctx context.Context, tenantID, idOrURI string) (Download, error) {
+	ctx, span := otel.Tracer("runmesh/artifact").Start(ctx, "artifact.sign_download", trace.WithAttributes(attribute.String("tenant_id", tenantID)))
+	defer span.End()
 	var a storage.Artifact
 	var err error
 	if strings.HasPrefix(idOrURI, "s3://") {

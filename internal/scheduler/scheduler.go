@@ -8,16 +8,23 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/prometheus/client_golang/prometheus"
 	"github.com/robfig/cron/v3"
+	"github.com/runmesh/runmesh/internal/live"
 	"github.com/runmesh/runmesh/internal/messaging"
 	"github.com/runmesh/runmesh/internal/storage"
 	"github.com/runmesh/runmesh/internal/tracecontext"
 	"github.com/runmesh/runmesh/internal/workflow"
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/trace"
 )
 
 type Service struct {
 	Store                            *storage.Store
 	Publisher                        *messaging.Publisher
+	Live                             *live.Broker
+	Published                        *prometheus.CounterVec
 	ScheduleInterval, OutboxInterval time.Duration
 }
 
@@ -241,18 +248,26 @@ func (s *Service) publishBatch(ctx context.Context) error {
 		return err
 	}
 	defer tx.Rollback(ctx)
-	rows, err := tx.Query(ctx, `SELECT id,aggregate_id,event_type,payload,COALESCE(trace_parent,'') FROM outbox_events WHERE published_at IS NULL ORDER BY created_at FOR UPDATE SKIP LOCKED LIMIT 100`)
+	rows, err := tx.Query(ctx, `SELECT o.id,o.aggregate_id,o.event_type,o.payload,COALESCE(o.trace_parent,''),o.created_at,
+		COALESCE(
+			(SELECT tenant_id::text FROM workflow_runs WHERE id=o.aggregate_id AND o.aggregate_type='workflow_run'),
+			(SELECT r.tenant_id::text FROM task_runs t JOIN workflow_runs r ON r.id=t.workflow_run_id WHERE t.id=o.aggregate_id AND o.aggregate_type='task_run'),
+			(SELECT tenant_id::text FROM workflow_definitions WHERE id=o.aggregate_id AND o.aggregate_type='workflow_definition'),
+			''
+		)
+		FROM outbox_events o WHERE o.published_at IS NULL ORDER BY o.created_at FOR UPDATE OF o SKIP LOCKED LIMIT 100`)
 	if err != nil {
 		return err
 	}
 	type event struct {
-		id, aggregateID, eventType, traceParent string
-		payload                                 []byte
+		id, aggregateID, eventType, traceParent, tenantID string
+		payload                                           []byte
+		createdAt                                         time.Time
 	}
 	var events []event
 	for rows.Next() {
 		var e event
-		if err = rows.Scan(&e.id, &e.aggregateID, &e.eventType, &e.payload, &e.traceParent); err != nil {
+		if err = rows.Scan(&e.id, &e.aggregateID, &e.eventType, &e.payload, &e.traceParent, &e.createdAt, &e.tenantID); err != nil {
 			rows.Close()
 			return err
 		}
@@ -269,14 +284,34 @@ func (s *Service) publishBatch(ctx context.Context) error {
 			key = envelope.WorkflowRunID
 		}
 		publishContext := tracecontext.IntoContext(ctx, e.traceParent)
+		publishContext, span := otel.Tracer("runmesh/scheduler").Start(publishContext, "outbox.publish", trace.WithAttributes(attribute.String("tenant_id", e.tenantID), attribute.String("event.id", e.id), attribute.String("event.type", e.eventType)))
 		if err = s.Publisher.Publish(publishContext, []byte(key), e.payload, map[string]string{"event_type": e.eventType, "event_id": e.id}); err != nil {
+			span.RecordError(err)
+			span.End()
 			return err
 		}
+		span.End()
 		if _, err = tx.Exec(ctx, `UPDATE outbox_events SET published_at=now() WHERE id=$1 AND published_at IS NULL`, e.id); err != nil {
 			return err
 		}
 	}
-	return tx.Commit(ctx)
+	if err = tx.Commit(ctx); err != nil {
+		return err
+	}
+	if s.Published != nil {
+		for _, e := range events {
+			s.Published.WithLabelValues(e.tenantID, e.eventType).Inc()
+		}
+	}
+	if s.Live != nil {
+		for _, e := range events {
+			if liveErr := s.Live.Publish(ctx, e.tenantID, live.Event{ID: e.id, Type: e.eventType, AggregateID: e.aggregateID, Payload: e.payload, OccurredAt: e.createdAt.UTC().Format(time.RFC3339Nano)}); liveErr != nil {
+				slog.Warn("live notification unavailable", "tenant_id", e.tenantID, "event_id", e.id, "event_type", e.eventType, "error", liveErr)
+				break
+			}
+		}
+	}
+	return nil
 }
 func mustJSON(v any) []byte {
 	b, err := json.Marshal(v)

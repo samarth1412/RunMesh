@@ -19,3 +19,34 @@ export const api = {
   cancel: (runId: string) => request<void>(`/v1/runs/${runId}/cancel`, { method: 'POST', body: '{}' }),
   replay: (taskId: string) => request<void>(`/v1/dead-letter/${taskId}/replay`, { method: 'POST', body: '{}' }),
 }
+
+export function subscribeToEvents(onEvent: () => void, onConnection: (connected: boolean) => void): () => void {
+  if (typeof WebSocket === 'undefined') return () => undefined
+  let cancelled = false
+  let socket: WebSocket | undefined
+  let retry: number | undefined
+  let attempts = 0
+  const connect = async () => {
+    const token = await bearerToken()
+    if (cancelled) return
+    const endpoint = new URL(base + '/v1/stream', window.location.href)
+    endpoint.protocol = endpoint.protocol === 'https:' ? 'wss:' : 'ws:'
+    socket = new WebSocket(endpoint, token ? ['runmesh', `bearer.${token}`] : ['runmesh'])
+    socket.onopen = () => { attempts = 0; onConnection(true) }
+    socket.onmessage = () => onEvent()
+    socket.onerror = () => socket?.close()
+    socket.onclose = () => {
+      onConnection(false)
+      if (!cancelled) {
+        const delay = Math.min(30_000, 1_000 * 2 ** attempts++)
+        retry = window.setTimeout(() => void connect(), delay)
+      }
+    }
+  }
+  void connect()
+  return () => {
+    cancelled = true
+    if (retry !== undefined) window.clearTimeout(retry)
+    socket?.close()
+  }
+}

@@ -17,6 +17,15 @@ security:
   - apiKeyAuth: []
 paths:
 
+  /v1/stream:
+    get:
+      operationId: streamTenantEvents
+      description: Upgrade to a tenant-scoped WebSocket. Browser clients pass the OIDC token using the `bearer.<token>` WebSocket subprotocol and must re-read durable API state after every notification.
+      responses:
+        "101": {description: WebSocket upgrade; notifications are best-effort}
+        "401": {description: Missing or invalid credential}
+        "503": {description: Redis live notification service unavailable}
+
   /v1/api-keys:
     get:
       operationId: listAPIKeys

@@ -70,6 +70,7 @@ services:
     depends_on:
       migrate: {condition: service_completed_successfully}
       redpanda: {condition: service_healthy}
+      redis: {condition: service_healthy}
     restart: unless-stopped
 
   worker-python:
@@ -110,7 +111,9 @@ services:
   prometheus:
     image: prom/prometheus:v3.1.0
     command: ["--config.file=/etc/prometheus/prometheus.yml"]
-    volumes: ["./deploy/docker/prometheus.yaml:/etc/prometheus/prometheus.yml:ro"]
+    volumes:
+      - ./deploy/docker/prometheus.yaml:/etc/prometheus/prometheus.yml:ro
+      - ./deploy/docker/prometheus-rules.yaml:/etc/prometheus/rules.yaml:ro
     ports: ["9090:9090"]
 
   loki:

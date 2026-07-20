@@ -1,11 +1,13 @@
 package api
 
 import (
+	"bufio"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"strconv"
 	"strings"
@@ -18,7 +20,9 @@ import (
 	"github.com/robfig/cron/v3"
 	"github.com/runmesh/runmesh/internal/artifact"
 	"github.com/runmesh/runmesh/internal/auth"
+	"github.com/runmesh/runmesh/internal/live"
 	"github.com/runmesh/runmesh/internal/storage"
+	"github.com/runmesh/runmesh/internal/telemetry"
 	"github.com/runmesh/runmesh/internal/workflow"
 	openapispec "github.com/runmesh/runmesh/openapi"
 )
@@ -34,6 +38,7 @@ type Server struct {
 	DependencyReady func(context.Context) error
 	APIKeyPepper    string
 	Artifacts       *artifact.Manager
+	Live            *live.Broker
 	Requests        *prometheus.HistogramVec
 }
 
@@ -73,6 +78,7 @@ func (s *Server) Handler() http.Handler {
 	public.HandleFunc("POST /v1/artifacts/uploads", auth.Require("developer", "artifacts:write", s.createArtifactUpload))
 	public.HandleFunc("POST /v1/artifacts/{id}/complete", auth.Require("developer", "artifacts:write", s.completeArtifactUpload))
 	public.HandleFunc("GET /v1/artifacts/{id}/download", auth.Require("viewer", "artifacts:read", s.downloadArtifact))
+	public.HandleFunc("GET /v1/stream", auth.Require("viewer", "runs:read", s.stream))
 	publicHandler := s.instrument(public)
 	if s.RateLimit != nil {
 		publicHandler = s.RateLimit(publicHandler)
@@ -102,7 +108,11 @@ func (s *Server) instrument(next http.Handler) http.Handler {
 		start := time.Now()
 		rw := &responseWriter{ResponseWriter: w, status: 200}
 		next.ServeHTTP(rw, r)
-		s.Requests.WithLabelValues(r.Method, routeLabel(r.URL.Path), strconv.Itoa(rw.status)).Observe(time.Since(start).Seconds())
+		duration := time.Since(start)
+		route := routeLabel(r.URL.Path)
+		s.Requests.WithLabelValues(r.Method, route, strconv.Itoa(rw.status)).Observe(duration.Seconds())
+		principal := auth.PrincipalFrom(r.Context())
+		telemetry.Logger(r.Context(), "tenant_id", principal.TenantID).Info("http request", "method", r.Method, "route", route, "status", rw.status, "duration_ms", duration.Milliseconds())
 	})
 }
 
@@ -112,6 +122,21 @@ type responseWriter struct {
 }
 
 func (w *responseWriter) WriteHeader(code int) { w.status = code; w.ResponseWriter.WriteHeader(code) }
+
+func (w *responseWriter) Hijack() (net.Conn, *bufio.ReadWriter, error) {
+	hijacker, ok := w.ResponseWriter.(http.Hijacker)
+	if !ok {
+		return nil, nil, http.ErrNotSupported
+	}
+	w.status = http.StatusSwitchingProtocols
+	return hijacker.Hijack()
+}
+
+func (w *responseWriter) Flush() {
+	if flusher, ok := w.ResponseWriter.(http.Flusher); ok {
+		flusher.Flush()
+	}
+}
 
 type workflowRequest struct {
 	Name  string                       `json:"name"`

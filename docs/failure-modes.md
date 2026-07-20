@@ -7,6 +7,6 @@
 | Worker crash | Expired lease becomes retryable or dead after attempt exhaustion |
 | Completion response lost | Repeated completion sees the terminal task and is idempotent |
 | Scheduler crash | Database locks are released; another replica claims work |
-| Redis unavailable | Rate limiting degrades closed in production; execution state is unaffected |
+| Redis unavailable | Rate limiting fails closed in production and live WebSocket hints reconnect with polling fallback; durable scheduling and execution remain unaffected |
 | Artifact store unavailable | Worker reports a retryable failure |
 | Cancellation during execution | Heartbeat returns cancellation; worker token is set |
