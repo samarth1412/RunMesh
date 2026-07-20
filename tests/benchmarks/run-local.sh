@@ -16,6 +16,16 @@ duplicate_prefix="validation-duplicate-$run_suffix"
 
 cp "$0" "$result_dir/commands.sh"
 docker compose up -d --build
+for endpoint in \
+  http://localhost:8180/realms/runmesh/.well-known/openid-configuration \
+  http://localhost:8080/health/ready; do
+  ready=0
+  for _ in $(seq 1 90); do
+    if curl -fsS "$endpoint" >/dev/null; then ready=1; break; fi
+    sleep 2
+  done
+  [[ "$ready" == 1 ]] || { echo "benchmark dependency did not become ready: $endpoint" >&2; exit 1; }
+done
 benchmark_token=$(python3 tests/benchmarks/local.py token)
 
 docker compose exec -T redpanda rpk topic describe runmesh.tasks --format json > "$result_dir/kafka-topology-before.json"
