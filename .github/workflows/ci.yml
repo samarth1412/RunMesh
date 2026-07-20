@@ -58,7 +58,7 @@ jobs:
       - uses: docker/setup-buildx-action@v3
       - uses: docker/build-push-action@v6
         with: {context: ., build-args: "SERVICE=${{ matrix.service }}", tags: "runmesh/${{ matrix.service }}:${{ github.sha }}", load: true}
-      - uses: aquasecurity/trivy-action@0.29.0
+      - uses: aquasecurity/trivy-action@v0.36.0
         with: {image-ref: "runmesh/${{ matrix.service }}:${{ github.sha }}", severity: CRITICAL, exit-code: "1", ignore-unfixed: true}
   compose-e2e:
     runs-on: ubuntu-latest
