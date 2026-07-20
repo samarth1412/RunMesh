@@ -14,8 +14,18 @@ type Publisher struct {
 	topic  string
 }
 
-func NewPublisher(brokers []string, topic string) *Publisher {
-	return &Publisher{topic: topic, writer: &kafka.Writer{Addr: kafka.TCP(brokers...), Topic: topic, Balancer: &kafka.Hash{}, RequiredAcks: kafka.RequireAll, Async: false, BatchTimeout: 10 * time.Millisecond}}
+type PublisherOption func(*kafka.Writer)
+
+func WithTransport(transport kafka.RoundTripper) PublisherOption {
+	return func(writer *kafka.Writer) { writer.Transport = transport }
+}
+
+func NewPublisher(brokers []string, topic string, options ...PublisherOption) *Publisher {
+	writer := &kafka.Writer{Addr: kafka.TCP(brokers...), Topic: topic, Balancer: &kafka.Hash{}, RequiredAcks: kafka.RequireAll, Async: false, BatchTimeout: 10 * time.Millisecond}
+	for _, option := range options {
+		option(writer)
+	}
+	return &Publisher{topic: topic, writer: writer}
 }
 func (p *Publisher) Publish(ctx context.Context, key, value []byte, headers map[string]string) error {
 	otel.GetTextMapPropagator().Inject(ctx, propagation.MapCarrier(headers))
