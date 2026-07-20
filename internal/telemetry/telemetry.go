@@ -21,7 +21,9 @@ func Setup(ctx context.Context, serviceName string) (func(context.Context) error
 	if err != nil {
 		return nil, err
 	}
-	res, err := resource.Merge(resource.Default(), resource.NewWithAttributes(semconv.SchemaURL, semconv.ServiceName(serviceName)))
+	// Leave the custom resource schema unset so it can be merged with the SDK's
+	// default resource even when dependencies use different semconv versions.
+	res, err := resource.Merge(resource.Default(), resource.NewWithAttributes("", semconv.ServiceName(serviceName)))
 	if err != nil {
 		return nil, err
 	}
