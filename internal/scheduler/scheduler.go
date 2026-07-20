@@ -33,6 +33,12 @@ func (s *Service) Run(ctx context.Context) error {
 	}
 }
 
+// RunOnce executes one scheduling cycle without starting background loops.
+// It is useful for deterministic recovery checks and administrative tooling.
+func (s *Service) RunOnce(ctx context.Context) error {
+	return s.tick(ctx)
+}
+
 func (s *Service) runScheduler(ctx context.Context) error {
 	ticker := time.NewTicker(s.ScheduleInterval)
 	defer ticker.Stop()

@@ -5,6 +5,7 @@ package integration
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -13,6 +14,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/runmesh/runmesh/internal/scheduler"
 	"github.com/runmesh/runmesh/internal/storage"
 	"github.com/runmesh/runmesh/internal/workflow"
 	"github.com/testcontainers/testcontainers-go"
@@ -110,6 +112,137 @@ func TestRedisRedpandaAndMinIOContainers(t *testing.T) {
 	}
 	for _, request := range requests {
 		start(t, ctx, request)
+	}
+}
+
+func TestWorkerCrashLeaseRecovery(t *testing.T) {
+	ctx := context.Background()
+	container := start(t, ctx, testcontainers.ContainerRequest{
+		Image: "postgres:17-alpine", ExposedPorts: []string{"5432/tcp"},
+		Env:        map[string]string{"POSTGRES_DB": "runmesh", "POSTGRES_USER": "runmesh", "POSTGRES_PASSWORD": "runmesh"},
+		WaitingFor: wait.ForLog("database system is ready to accept connections").WithOccurrence(2).WithStartupTimeout(time.Minute),
+	})
+	host, _ := container.Host(ctx)
+	port, _ := container.MappedPort(ctx, "5432/tcp")
+	databaseURL := fmt.Sprintf("postgres://runmesh:runmesh@%s:%s/runmesh?sslmode=disable", host, port.Port())
+	applyMigrations(t, ctx, databaseURL)
+	store, err := storage.New(ctx, databaseURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+
+	dag := workflow.DAG{Tasks: map[string]workflow.TaskSpec{
+		"recover": {Handler: "test.recover", MaximumAttempts: 3},
+	}}
+	definition, err := store.CreateWorkflow(ctx, "00000000-0000-0000-0000-000000000001", "00000000-0000-0000-0000-000000000001", "worker-crash", dag)
+	if err != nil {
+		t.Fatal(err)
+	}
+	run, created, err := store.CreateRun(ctx, "00000000-0000-0000-0000-000000000001", "00000000-0000-0000-0000-000000000001", definition.ID, "worker-crash", json.RawMessage(`{"value":1}`))
+	if err != nil || !created {
+		t.Fatalf("create run: created=%v err=%v", created, err)
+	}
+
+	service := scheduler.Service{Store: store}
+	if err = service.RunOnce(ctx); err != nil {
+		t.Fatal(err)
+	}
+	run, err = store.GetRun(ctx, "00000000-0000-0000-0000-000000000001", run.ID)
+	if err != nil || len(run.Tasks) != 1 || run.Tasks[0].Status != "DISPATCHING" {
+		t.Fatalf("task was not dispatched: run=%+v err=%v", run, err)
+	}
+	taskID := run.Tasks[0].ID
+	first, err := store.LeaseTask(ctx, taskID, "worker-crashed", 150*time.Millisecond)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = store.StartTask(ctx, taskID, "worker-crashed"); err != nil {
+		t.Fatal(err)
+	}
+	waitForLeaseExpiry(t, ctx, store, taskID)
+
+	if err = service.RunOnce(ctx); err != nil {
+		t.Fatal(err)
+	}
+	recovered, err := store.GetRun(ctx, "00000000-0000-0000-0000-000000000001", run.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	task := recovered.Tasks[0]
+	if task.Status != "RETRY_WAIT" || task.AttemptCount != 1 || task.LeaseOwner != nil || task.LeaseExpiresAt != nil {
+		t.Fatalf("expired lease was not recovered: %+v", task)
+	}
+	if task.AvailableAt.Before(time.Now().Add(time.Second)) {
+		t.Fatalf("retry backoff was not applied: available_at=%s", task.AvailableAt)
+	}
+	if _, _, err = store.HeartbeatTask(ctx, taskID, "worker-crashed", time.Minute); !errors.Is(err, storage.ErrLeaseLost) {
+		t.Fatalf("stale worker heartbeat error=%v, want ErrLeaseLost", err)
+	}
+	assertAttempt(t, ctx, store, taskID, 1, "worker-crashed", "RETRY_WAIT", "LeaseExpired")
+	assertOutboxEvent(t, ctx, store, taskID, "task.retry_wait")
+
+	time.Sleep(time.Until(task.AvailableAt) + 25*time.Millisecond)
+	if err = service.RunOnce(ctx); err != nil {
+		t.Fatal(err)
+	}
+	second, err := store.LeaseTask(ctx, taskID, "worker-replacement", time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if second.AttemptCount != first.AttemptCount+1 {
+		t.Fatalf("replacement attempt=%d, want %d", second.AttemptCount, first.AttemptCount+1)
+	}
+	if _, err = store.StartTask(ctx, taskID, "worker-replacement"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = store.CompleteTask(ctx, taskID, "worker-replacement", json.RawMessage(`{"recovered":true}`), ""); err != nil {
+		t.Fatal(err)
+	}
+	completed, err := store.GetRun(ctx, "00000000-0000-0000-0000-000000000001", run.ID)
+	if err != nil || completed.Status != "SUCCEEDED" || completed.Tasks[0].Status != "SUCCEEDED" {
+		t.Fatalf("replacement worker did not complete run: run=%+v err=%v", completed, err)
+	}
+	assertAttempt(t, ctx, store, taskID, 2, "worker-replacement", "SUCCEEDED", "")
+}
+
+func waitForLeaseExpiry(t *testing.T, ctx context.Context, store *storage.Store, taskID string) {
+	t.Helper()
+	deadline := time.Now().Add(3 * time.Second)
+	for time.Now().Before(deadline) {
+		var expired bool
+		if err := store.Pool.QueryRow(ctx, `SELECT lease_expires_at <= now() FROM task_runs WHERE id=$1`, taskID).Scan(&expired); err != nil {
+			t.Fatal(err)
+		}
+		if expired {
+			return
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatal("lease did not expire")
+}
+
+func assertAttempt(t *testing.T, ctx context.Context, store *storage.Store, taskID string, attempt int, workerID, exitStatus, errorType string) {
+	t.Helper()
+	var gotWorker, gotStatus, gotError string
+	var endedAt time.Time
+	err := store.Pool.QueryRow(ctx, `SELECT worker_id,ended_at,exit_status,COALESCE(error_type,'') FROM task_attempts WHERE task_run_id=$1 AND attempt_number=$2`, taskID, attempt).Scan(&gotWorker, &endedAt, &gotStatus, &gotError)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if gotWorker != workerID || gotStatus != exitStatus || gotError != errorType || endedAt.IsZero() {
+		t.Fatalf("attempt %d mismatch: worker=%q status=%q error=%q ended_at=%s", attempt, gotWorker, gotStatus, gotError, endedAt)
+	}
+}
+
+func assertOutboxEvent(t *testing.T, ctx context.Context, store *storage.Store, taskID, eventType string) {
+	t.Helper()
+	var count int
+	if err := store.Pool.QueryRow(ctx, `SELECT count(*) FROM outbox_events WHERE aggregate_id=$1 AND event_type=$2`, taskID, eventType).Scan(&count); err != nil {
+		t.Fatal(err)
+	}
+	if count != 1 {
+		t.Fatalf("outbox event %q count=%d, want 1", eventType, count)
 	}
 }
 
