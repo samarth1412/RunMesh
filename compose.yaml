@@ -54,6 +54,9 @@ services:
   control-plane:
     build: {context: ., args: {SERVICE: control-plane}}
     env_file: [deploy/docker/local.env]
+    networks:
+      default:
+        aliases: [runmesh-control-plane]
     ports: ["8080:8080", "7001:7001"]
     depends_on:
       migrate: {condition: service_completed_successfully}

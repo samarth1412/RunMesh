@@ -1,47 +1,169 @@
-{{- range $component, $replicas := dict "control-plane" .Values.replicas.controlPlane "scheduler" .Values.replicas.scheduler }}
+{{- range $component, $settings := dict "control-plane" (dict "replicas" .Values.replicas.controlPlane "image" .Values.images.controlPlane "resources" .Values.resources.controlPlane) "scheduler" (dict "replicas" .Values.replicas.scheduler "image" .Values.images.scheduler "resources" .Values.resources.scheduler) }}
 apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: runmesh-{{ $component }}
-  labels: {app.kubernetes.io/name: runmesh, app.kubernetes.io/component: {{ $component }}}
+  labels:
+    {{- include "runmesh.labels" $ | nindent 4 }}
+    app.kubernetes.io/component: {{ $component }}
 spec:
-  replicas: {{ $replicas }}
+  replicas: {{ $settings.replicas }}
+  revisionHistoryLimit: 3
   strategy: {type: RollingUpdate, rollingUpdate: {maxUnavailable: 0, maxSurge: 1}}
-  selector: {matchLabels: {app.kubernetes.io/name: runmesh, app.kubernetes.io/component: {{ $component }}}}
+  selector:
+    matchLabels: {app.kubernetes.io/name: runmesh, app.kubernetes.io/instance: {{ $.Release.Name }}, app.kubernetes.io/component: {{ $component }}}
   template:
-    metadata: {labels: {app.kubernetes.io/name: runmesh, app.kubernetes.io/component: {{ $component }}}}
+    metadata:
+      labels: {app.kubernetes.io/name: runmesh, app.kubernetes.io/instance: {{ $.Release.Name }}, app.kubernetes.io/component: {{ $component }}}
+      annotations:
+        checksum/config: {{ include (print $.Template.BasePath "/config.yaml") $ | sha256sum }}
     spec:
-      serviceAccountName: runmesh
-      securityContext: {runAsNonRoot: true, seccompProfile: {type: RuntimeDefault}}
+      serviceAccountName: {{ include "runmesh.serviceAccountName" $ }}
+      terminationGracePeriodSeconds: 30
+      securityContext:
+        {{- toYaml $.Values.podSecurityContext | nindent 8 }}
+      {{- with $.Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: kubernetes.io/hostname
+          whenUnsatisfiable: ScheduleAnyway
+          labelSelector:
+            matchLabels: {app.kubernetes.io/name: runmesh, app.kubernetes.io/instance: {{ $.Release.Name }}, app.kubernetes.io/component: {{ $component }}}
       containers:
         - name: {{ $component }}
-          image: "{{ $.Values.image.repository }}:{{ $.Values.image.tag }}-{{ $component }}"
-          imagePullPolicy: {{ $.Values.image.pullPolicy }}
-          securityContext: {allowPrivilegeEscalation: false, readOnlyRootFilesystem: true, capabilities: {drop: ["ALL"]}}
-          envFrom: [{configMapRef: {name: runmesh}}, {secretRef: {name: runmesh}}]
+          image: "{{ $settings.image.repository }}:{{ $settings.image.tag }}"
+          imagePullPolicy: {{ $settings.image.pullPolicy }}
+          securityContext:
+            {{- toYaml $.Values.containerSecurityContext | nindent 12 }}
+          envFrom:
+            - configMapRef: {name: {{ include "runmesh.name" $ }}}
+            - secretRef: {name: {{ include "runmesh.secretName" $ }}}
           {{- if eq $component "control-plane" }}
-          ports: [{name: http, containerPort: 8080}, {name: grpc, containerPort: 7001}]
-          readinessProbe: {httpGet: {path: /health/ready, port: http}, periodSeconds: 5}
-          livenessProbe: {httpGet: {path: /health/live, port: http}, periodSeconds: 10}
+          ports:
+            - {name: http, containerPort: 8080, protocol: TCP}
+            - {name: grpc, containerPort: 7001, protocol: TCP}
+          startupProbe: {httpGet: {path: /health/live, port: http}, failureThreshold: 30, periodSeconds: 2}
+          readinessProbe: {httpGet: {path: /health/ready, port: http}, failureThreshold: 3, periodSeconds: 5}
+          livenessProbe: {httpGet: {path: /health/live, port: http}, failureThreshold: 3, periodSeconds: 10}
+          {{- else }}
+          ports: [{name: metrics, containerPort: 9091, protocol: TCP}]
+          startupProbe: {tcpSocket: {port: metrics}, failureThreshold: 30, periodSeconds: 2}
+          readinessProbe: {httpGet: {path: /metrics, port: metrics}, failureThreshold: 3, periodSeconds: 5}
+          livenessProbe: {tcpSocket: {port: metrics}, failureThreshold: 3, periodSeconds: 10}
           {{- end }}
           resources:
-            {{- if eq $component "control-plane" }}{{ toYaml $.Values.resources.controlPlane | nindent 12 }}{{ else }}{{ toYaml $.Values.resources.scheduler | nindent 12 }}{{ end }}
+            {{- toYaml $settings.resources | nindent 12 }}
+          volumeMounts: [{name: tmp, mountPath: /tmp}]
+      volumes: [{name: tmp, emptyDir: {}}]
 ---
 {{- end }}
 apiVersion: apps/v1
 kind: Deployment
-metadata: {name: runmesh-web, labels: {app.kubernetes.io/name: runmesh, app.kubernetes.io/component: web}}
+metadata:
+  name: runmesh-web
+  labels:
+    {{- include "runmesh.labels" . | nindent 4 }}
+    app.kubernetes.io/component: web
 spec:
   replicas: {{ .Values.replicas.web }}
-  selector: {matchLabels: {app.kubernetes.io/name: runmesh, app.kubernetes.io/component: web}}
+  revisionHistoryLimit: 3
+  strategy: {type: RollingUpdate, rollingUpdate: {maxUnavailable: 0, maxSurge: 1}}
+  selector:
+    matchLabels: {app.kubernetes.io/name: runmesh, app.kubernetes.io/instance: {{ .Release.Name }}, app.kubernetes.io/component: web}
   template:
-    metadata: {labels: {app.kubernetes.io/name: runmesh, app.kubernetes.io/component: web}}
+    metadata:
+      labels: {app.kubernetes.io/name: runmesh, app.kubernetes.io/instance: {{ .Release.Name }}, app.kubernetes.io/component: web}
     spec:
-      serviceAccountName: runmesh
-      securityContext: {runAsNonRoot: true, seccompProfile: {type: RuntimeDefault}}
+      serviceAccountName: {{ include "runmesh.serviceAccountName" . }}
+      terminationGracePeriodSeconds: 30
+      securityContext:
+        {{- toYaml .Values.podSecurityContext | nindent 8 }}
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
       containers:
         - name: web
-          image: "{{ .Values.webImage.repository }}:{{ .Values.webImage.tag }}"
-          ports: [{name: http, containerPort: 3000}]
-          securityContext: {allowPrivilegeEscalation: false, readOnlyRootFilesystem: true, capabilities: {drop: ["ALL"]}}
-          readinessProbe: {httpGet: {path: /, port: http}}
+          image: "{{ .Values.images.web.repository }}:{{ .Values.images.web.tag }}"
+          imagePullPolicy: {{ .Values.images.web.pullPolicy }}
+          ports: [{name: http, containerPort: 3000, protocol: TCP}]
+          securityContext:
+            {{- toYaml .Values.containerSecurityContext | nindent 12 }}
+          startupProbe: {httpGet: {path: /, port: http}, failureThreshold: 30, periodSeconds: 2}
+          readinessProbe: {httpGet: {path: /, port: http}, failureThreshold: 3, periodSeconds: 5}
+          livenessProbe: {httpGet: {path: /, port: http}, failureThreshold: 3, periodSeconds: 10}
+          resources:
+            {{- toYaml .Values.resources.web | nindent 12 }}
+          volumeMounts:
+            - {name: cache, mountPath: /var/cache/nginx}
+            - {name: run, mountPath: /var/run}
+            - {name: tmp, mountPath: /tmp}
+            - {name: web-config, mountPath: /usr/share/nginx/html/config.js, subPath: config.js, readOnly: true}
+      volumes:
+        - {name: cache, emptyDir: {}}
+        - {name: run, emptyDir: {}}
+        - {name: tmp, emptyDir: {}}
+        - {name: web-config, configMap: {name: {{ include "runmesh.name" . }}, items: [{key: config.js, path: config.js}]}}
+---
+{{- range $pool := .Values.workerPools }}
+{{- if $pool.enabled }}
+{{- $defaultImage := $.Values.images.workerGo }}
+{{- if eq $pool.type "python" }}{{ $defaultImage = $.Values.images.workerPython }}{{ end }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: runmesh-worker-{{ $pool.name }}
+  labels:
+    {{- include "runmesh.labels" $ | nindent 4 }}
+    app.kubernetes.io/component: worker
+    runmesh.io/worker-pool: {{ $pool.name }}
+spec:
+  replicas: {{ $pool.replicas }}
+  revisionHistoryLimit: 3
+  strategy: {type: RollingUpdate, rollingUpdate: {maxUnavailable: 0, maxSurge: 1}}
+  selector:
+    matchLabels: {app.kubernetes.io/name: runmesh, app.kubernetes.io/instance: {{ $.Release.Name }}, app.kubernetes.io/component: worker, runmesh.io/worker-pool: {{ $pool.name }}}
+  template:
+    metadata:
+      labels: {app.kubernetes.io/name: runmesh, app.kubernetes.io/instance: {{ $.Release.Name }}, app.kubernetes.io/component: worker, runmesh.io/worker-pool: {{ $pool.name }}}
+      annotations:
+        checksum/config: {{ include (print $.Template.BasePath "/config.yaml") $ | sha256sum }}
+    spec:
+      serviceAccountName: {{ include "runmesh.serviceAccountName" $ }}
+      terminationGracePeriodSeconds: 45
+      securityContext:
+        {{- toYaml $.Values.podSecurityContext | nindent 8 }}
+      {{- with $.Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: worker
+          image: "{{ default $defaultImage.repository $pool.image.repository }}:{{ default $defaultImage.tag $pool.image.tag }}"
+          imagePullPolicy: {{ default $defaultImage.pullPolicy $pool.image.pullPolicy }}
+          securityContext:
+            {{- toYaml $.Values.containerSecurityContext | nindent 12 }}
+          envFrom: [{configMapRef: {name: {{ include "runmesh.name" $ }}}}]
+          env:
+            - name: RUNMESH_INTERNAL_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ default (include "runmesh.secretName" $) $pool.credentialSecretName }}
+                  key: {{ $pool.credentialSecretKey }}
+          {{- if eq $pool.type "python" }}
+          startupProbe: {exec: {command: [python, -c, "import runmesh"]}, failureThreshold: 30, periodSeconds: 2}
+          livenessProbe: {exec: {command: [python, -c, "import runmesh"]}, failureThreshold: 3, periodSeconds: 30}
+          {{- else }}
+          startupProbe: {exec: {command: [/app/service, --healthcheck]}, failureThreshold: 30, periodSeconds: 2}
+          livenessProbe: {exec: {command: [/app/service, --healthcheck]}, failureThreshold: 3, periodSeconds: 30}
+          {{- end }}
+          resources:
+            {{- toYaml $pool.resources | nindent 12 }}
+          volumeMounts: [{name: tmp, mountPath: /tmp}]
+      volumes: [{name: tmp, emptyDir: {}}]
+---
+{{- end }}
+{{- end }}

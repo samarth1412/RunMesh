@@ -6,14 +6,50 @@ metadata:
     {{- include "runmesh.labels" . | nindent 4 }}
 data:
   RUNMESH_HTTP_ADDR: ":8080"
-  RUNMESH_KAFKA_BROKERS: {{ .Values.config.kafkaBrokers | quote }}
+  RUNMESH_GRPC_ADDR: ":7001"
+  RUNMESH_SCHEDULER_METRICS_ADDR: ":9091"
+  RUNMESH_ENDPOINT: "runmesh-control-plane:7001"
+  RUNMESH_HTTP_ENDPOINT: "runmesh-control-plane:8080"
+  RUNMESH_KAFKA_BROKERS: {{ required "config.kafkaBrokers is required; Kafka is externally supplied" .Values.config.kafkaBrokers | quote }}
   RUNMESH_KAFKA_TOPIC: {{ .Values.config.kafkaTopic | quote }}
-  RUNMESH_DEV_AUTH: "false"
+  RUNMESH_DEV_AUTH: {{ .Values.config.devAuth | quote }}
+  RUNMESH_OIDC_ISSUER: {{ .Values.config.oidcIssuer | quote }}
+  RUNMESH_OIDC_AUDIENCE: {{ .Values.config.oidcAudience | quote }}
+  RUNMESH_OIDC_JWKS_URL: {{ .Values.config.oidcJwksURL | quote }}
+  RUNMESH_OIDC_TENANT_CLAIM: {{ .Values.config.oidcTenantClaim | quote }}
+  RUNMESH_CORS_ALLOWLIST: {{ .Values.config.corsAllowlist | quote }}
+  RUNMESH_RATE_LIMIT_RATE: {{ .Values.config.rateLimitRate | quote }}
+  RUNMESH_RATE_LIMIT_BURST: {{ .Values.config.rateLimitBurst | quote }}
+  RUNMESH_RATE_LIMIT_FAIL_OPEN: "false"
+  RUNMESH_ARTIFACT_ENDPOINT: {{ .Values.config.artifactEndpoint | quote }}
+  RUNMESH_ARTIFACT_PUBLIC_ENDPOINT: {{ .Values.config.artifactPublicEndpoint | quote }}
+  RUNMESH_ARTIFACT_REGION: {{ .Values.config.artifactRegion | quote }}
+  RUNMESH_ARTIFACT_BUCKET: {{ .Values.config.artifactBucket | quote }}
+  RUNMESH_ARTIFACT_PATH_STYLE: {{ .Values.config.artifactPathStyle | quote }}
+  RUNMESH_ARTIFACT_CREATE_BUCKET: {{ .Values.config.artifactCreateBucket | quote }}
+  RUNMESH_ARTIFACT_PRESIGN_EXPIRY: {{ .Values.config.artifactPresignExpiry | quote }}
+  OTEL_EXPORTER_OTLP_ENDPOINT: {{ .Values.config.telemetryEndpoint | quote }}
+  config.js: |
+    window.__RUNMESH_CONFIG__ = {
+      apiUrl: {{ .Values.config.webApiURL | quote }},
+      devAuth: {{ .Values.config.devAuth }},
+      oidcAuthority: {{ .Values.config.oidcIssuer | quote }},
+      oidcClientId: {{ .Values.config.oidcAudience | quote }}
+    };
+{{- if not .Values.secret.existingSecret }}
 ---
 apiVersion: v1
 kind: Secret
-metadata: {name: {{ include "runmesh.name" . }}}
+metadata:
+  name: {{ include "runmesh.name" . }}
+  labels:
+    {{- include "runmesh.labels" . | nindent 4 }}
 type: Opaque
 stringData:
-  RUNMESH_DATABASE_URL: {{ required "config.databaseURL is required" .Values.config.databaseURL | quote }}
-  RUNMESH_INTERNAL_TOKEN: {{ required "secret.internalToken is required" .Values.secret.internalToken | quote }}
+  RUNMESH_DATABASE_URL: {{ required "secret.databaseURL or secret.existingSecret is required" .Values.secret.databaseURL | quote }}
+  RUNMESH_REDIS_URL: {{ required "secret.redisURL or secret.existingSecret is required" .Values.secret.redisURL | quote }}
+  RUNMESH_INTERNAL_TOKEN: {{ required "secret.internalToken or secret.existingSecret is required" .Values.secret.internalToken | quote }}
+  RUNMESH_API_KEY_PEPPER: {{ required "secret.apiKeyPepper or secret.existingSecret is required" .Values.secret.apiKeyPepper | quote }}
+  RUNMESH_ARTIFACT_ACCESS_KEY: {{ .Values.secret.artifactAccessKey | quote }}
+  RUNMESH_ARTIFACT_SECRET_KEY: {{ .Values.secret.artifactSecretKey | quote }}
+{{- end }}

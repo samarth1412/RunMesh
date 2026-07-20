@@ -40,12 +40,13 @@ type Server struct {
 	Artifacts       *artifact.Manager
 	Live            *live.Broker
 	Requests        *prometheus.HistogramVec
+	CORSAllowlist   map[string]struct{}
 }
 
 func New(store *storage.Store, lease time.Duration, authMiddleware, workerAuth, rateLimit func(http.Handler) http.Handler, dependencyReady func(context.Context) error, apiKeyPepper string, artifacts ...*artifact.Manager) *Server {
 	req := prometheus.NewHistogramVec(prometheus.HistogramOpts{Name: "api_request_duration_seconds", Help: "Public API request latency", Buckets: prometheus.DefBuckets}, []string{"method", "route", "status"})
 	prometheus.MustRegister(req)
-	server := &Server{Store: store, LeaseDuration: lease, Auth: authMiddleware, WorkerAuth: workerAuth, RateLimit: rateLimit, DependencyReady: dependencyReady, APIKeyPepper: apiKeyPepper, Requests: req}
+	server := &Server{Store: store, LeaseDuration: lease, Auth: authMiddleware, WorkerAuth: workerAuth, RateLimit: rateLimit, DependencyReady: dependencyReady, APIKeyPepper: apiKeyPepper, Requests: req, CORSAllowlist: map[string]struct{}{"http://localhost:3000": {}, "http://localhost:5173": {}}}
 	if len(artifacts) > 0 {
 		server.Artifacts = artifacts[0]
 	}
@@ -100,7 +101,7 @@ func (s *Server) Handler() http.Handler {
 	root.Handle("GET /metrics", promhttp.Handler())
 	root.HandleFunc("GET /openapi.yaml", serveOpenAPI)
 	root.HandleFunc("GET /docs", serveDocs)
-	return cors(root)
+	return s.cors(root)
 }
 
 func (s *Server) instrument(next http.Handler) http.Handler {
@@ -701,10 +702,10 @@ func routeLabel(path string) string {
 	}
 	return "/" + strings.Join(parts, "/")
 }
-func cors(next http.Handler) http.Handler {
+func (s *Server) cors(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		origin := r.Header.Get("Origin")
-		if origin == "http://localhost:3000" || origin == "http://localhost:5173" {
+		if _, allowed := s.CORSAllowlist[origin]; allowed {
 			w.Header().Set("Access-Control-Allow-Origin", origin)
 			w.Header().Set("Vary", "Origin")
 			w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Idempotency-Key, Authorization")

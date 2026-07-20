@@ -1,0 +1,61 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata: {name: postgres}
+spec:
+  selector: {matchLabels: {app: postgres}}
+  template:
+    metadata: {labels: {app: postgres}}
+    spec:
+      containers:
+        - name: postgres
+          image: postgres:17-alpine
+          env:
+            - {name: POSTGRES_DB, value: runmesh}
+            - {name: POSTGRES_USER, value: runmesh}
+            - {name: POSTGRES_PASSWORD, value: runmesh}
+          ports: [{containerPort: 5432}]
+          readinessProbe: {exec: {command: [pg_isready, -U, runmesh]}, periodSeconds: 2, failureThreshold: 30}
+---
+apiVersion: v1
+kind: Service
+metadata: {name: postgres}
+spec: {selector: {app: postgres}, ports: [{port: 5432}]}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata: {name: redis}
+spec:
+  selector: {matchLabels: {app: redis}}
+  template:
+    metadata: {labels: {app: redis}}
+    spec:
+      containers:
+        - name: redis
+          image: redis:7.4-alpine
+          ports: [{containerPort: 6379}]
+          readinessProbe: {exec: {command: [redis-cli, ping]}, periodSeconds: 2, failureThreshold: 30}
+---
+apiVersion: v1
+kind: Service
+metadata: {name: redis}
+spec: {selector: {app: redis}, ports: [{port: 6379}]}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata: {name: redpanda}
+spec:
+  selector: {matchLabels: {app: redpanda}}
+  template:
+    metadata: {labels: {app: redpanda}}
+    spec:
+      containers:
+        - name: redpanda
+          image: redpandadata/redpanda:v24.3.15
+          args: [redpanda, start, --smp, "1", --memory, 768M, --reserve-memory, 0M, --overprovisioned, --node-id, "0", --kafka-addr, 0.0.0.0:9092, --advertise-kafka-addr, redpanda:9092]
+          ports: [{containerPort: 9092}]
+          readinessProbe: {tcpSocket: {port: 9092}, periodSeconds: 2, failureThreshold: 60}
+---
+apiVersion: v1
+kind: Service
+metadata: {name: redpanda}
+spec: {selector: {app: redpanda}, ports: [{port: 9092}]}

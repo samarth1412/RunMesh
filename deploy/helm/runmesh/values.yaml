@@ -1,20 +1,95 @@
-image:
-  repository: ghcr.io/example/runmesh
-  tag: latest
-  pullPolicy: IfNotPresent
-webImage:
-  repository: ghcr.io/example/runmesh-web
-  tag: latest
+images:
+  controlPlane: {repository: ghcr.io/example/runmesh-control-plane, tag: latest, pullPolicy: IfNotPresent}
+  scheduler: {repository: ghcr.io/example/runmesh-scheduler, tag: latest, pullPolicy: IfNotPresent}
+  web: {repository: ghcr.io/example/runmesh-web, tag: latest, pullPolicy: IfNotPresent}
+  workerGo: {repository: ghcr.io/example/runmesh-worker-go, tag: latest, pullPolicy: IfNotPresent}
+  workerPython: {repository: ghcr.io/example/runmesh-worker-python, tag: latest, pullPolicy: IfNotPresent}
+imagePullSecrets: []
+
 replicas: {controlPlane: 2, scheduler: 2, web: 2}
+
 config:
-  databaseURL: ""
-  kafkaBrokers: "redpanda:9092"
+  devAuth: false
+  kafkaBrokers: "kafka.example.internal:9092"
   kafkaTopic: runmesh.tasks
-  oidcIssuer: ""
-  corsAllowlist: ""
+  oidcIssuer: "https://identity.example.com/realms/runmesh"
+  oidcAudience: runmesh-web
+  oidcJwksURL: "https://identity.example.com/realms/runmesh/protocol/openid-connect/certs"
+  oidcTenantClaim: runmesh_tenant_id
+  corsAllowlist: "https://runmesh.example.com"
+  webApiURL: ""
+  rateLimitRate: 100
+  rateLimitBurst: 200
+  artifactEndpoint: ""
+  artifactPublicEndpoint: ""
+  artifactRegion: us-east-1
+  artifactBucket: runmesh-artifacts
+  artifactPathStyle: false
+  artifactCreateBucket: false
+  artifactPresignExpiry: 15m
+  telemetryEndpoint: ""
+
 secret:
+  # Prefer existingSecret in production. Inline values are rendered only into
+  # a Kubernetes Secret and are never copied to a ConfigMap.
+  existingSecret: ""
+  databaseURL: ""
+  redisURL: ""
   internalToken: ""
+  apiKeyPepper: ""
+  artifactAccessKey: ""
+  artifactSecretKey: ""
+
+serviceAccount:
+  create: true
+  name: ""
+  annotations: {}
+
+workerPools:
+  - name: default-go
+    enabled: true
+    type: go
+    replicas: 2
+    image: {repository: "", tag: "", pullPolicy: ""}
+    credentialSecretName: ""
+    credentialSecretKey: RUNMESH_INTERNAL_TOKEN
+    resources:
+      requests: {cpu: 100m, memory: 128Mi}
+      limits: {cpu: "1", memory: 512Mi}
+    autoscaling: {enabled: true, minReplicas: 2, maxReplicas: 20, targetCPUUtilizationPercentage: 70}
+
 resources:
-  controlPlane: {requests: {cpu: 100m, memory: 128Mi}, limits: {cpu: 1, memory: 512Mi}}
-  scheduler: {requests: {cpu: 100m, memory: 128Mi}, limits: {cpu: 1, memory: 512Mi}}
-ingress: {enabled: false, className: nginx, host: runmesh.example.com, tlsSecret: ""}
+  controlPlane:
+    requests: {cpu: 250m, memory: 256Mi}
+    limits: {cpu: "2", memory: 1Gi}
+  scheduler:
+    requests: {cpu: 250m, memory: 256Mi}
+    limits: {cpu: "2", memory: 1Gi}
+  web:
+    requests: {cpu: 50m, memory: 64Mi}
+    limits: {cpu: 500m, memory: 256Mi}
+
+autoscaling:
+  controlPlane: {enabled: true, minReplicas: 2, maxReplicas: 10, targetCPUUtilizationPercentage: 70}
+  scheduler: {enabled: true, minReplicas: 2, maxReplicas: 10, targetCPUUtilizationPercentage: 70}
+  web: {enabled: true, minReplicas: 2, maxReplicas: 10, targetCPUUtilizationPercentage: 70}
+pdb: {enabled: true, minAvailable: 1}
+
+podSecurityContext: {runAsNonRoot: true, seccompProfile: {type: RuntimeDefault}}
+containerSecurityContext:
+  allowPrivilegeEscalation: false
+  readOnlyRootFilesystem: true
+  capabilities: {drop: [ALL]}
+
+ingress:
+  enabled: false
+  className: nginx
+  host: runmesh.example.com
+  tlsSecret: ""
+  annotations: {}
+
+networkPolicy:
+  enabled: true
+  ingressNamespace: ingress-nginx
+  monitoringNamespace: monitoring
+  externalPorts: [443, 5432, 6379, 9092, 4317, 9000]

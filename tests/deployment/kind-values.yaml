@@ -1,0 +1,34 @@
+images:
+  controlPlane: {repository: runmesh/control-plane, tag: rolling, pullPolicy: Never}
+  scheduler: {repository: runmesh/scheduler, tag: rolling, pullPolicy: Never}
+  web: {repository: runmesh/web, tag: rolling, pullPolicy: Never}
+  workerGo: {repository: runmesh/worker-go, tag: rolling, pullPolicy: Never}
+
+replicas: {controlPlane: 1, scheduler: 1, web: 1}
+
+config:
+  devAuth: true
+  kafkaBrokers: redpanda:9092
+  oidcIssuer: ""
+  oidcJwksURL: ""
+  corsAllowlist: http://127.0.0.1:18080
+
+workerPools:
+  - name: default-go
+    enabled: true
+    type: go
+    replicas: 2
+    image: {repository: "", tag: "", pullPolicy: ""}
+    credentialSecretName: ""
+    credentialSecretKey: RUNMESH_INTERNAL_TOKEN
+    resources:
+      requests: {cpu: 50m, memory: 64Mi}
+      limits: {cpu: "1", memory: 256Mi}
+    autoscaling: {enabled: false, minReplicas: 2, maxReplicas: 2, targetCPUUtilizationPercentage: 70}
+
+autoscaling:
+  controlPlane: {enabled: false, minReplicas: 1, maxReplicas: 2, targetCPUUtilizationPercentage: 70}
+  scheduler: {enabled: false, minReplicas: 1, maxReplicas: 2, targetCPUUtilizationPercentage: 70}
+  web: {enabled: false, minReplicas: 1, maxReplicas: 2, targetCPUUtilizationPercentage: 70}
+pdb: {enabled: false, minAvailable: 1}
+networkPolicy: {enabled: false, ingressNamespace: ingress-nginx, monitoringNamespace: monitoring, externalPorts: []}

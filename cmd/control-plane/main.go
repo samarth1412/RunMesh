@@ -87,6 +87,10 @@ func main() {
 		redisReady = limiter.Ping
 	}
 	server := api.New(store, cfg.LeaseDuration, authenticator.Middleware, authenticator.WorkerMiddleware, limiter.Middleware, redisReady, cfg.APIKeyPepper, artifactManager)
+	server.CORSAllowlist = make(map[string]struct{}, len(cfg.CORSAllowlist))
+	for _, origin := range cfg.CORSAllowlist {
+		server.CORSAllowlist[origin] = struct{}{}
+	}
 	server.Live = liveBroker
 	grpcListener, err := net.Listen("tcp", cfg.GRPCAddr)
 	if err != nil {
