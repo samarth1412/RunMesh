@@ -1,0 +1,26 @@
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata: {name: runmesh-control-plane}
+spec: {minAvailable: 1, selector: {matchLabels: {app.kubernetes.io/name: runmesh, app.kubernetes.io/component: control-plane}}}
+---
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata: {name: runmesh-control-plane}
+spec:
+  scaleTargetRef: {apiVersion: apps/v1, kind: Deployment, name: runmesh-control-plane}
+  minReplicas: 2
+  maxReplicas: 10
+  metrics: [{type: Resource, resource: {name: cpu, target: {type: Utilization, averageUtilization: 70}}}]
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata: {name: runmesh-default-deny}
+spec: {podSelector: {}, policyTypes: [Ingress, Egress]}
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata: {name: runmesh-web-to-api}
+spec:
+  podSelector: {matchLabels: {app.kubernetes.io/name: runmesh, app.kubernetes.io/component: control-plane}}
+  policyTypes: [Ingress]
+  ingress: [{from: [{podSelector: {matchLabels: {app.kubernetes.io/name: runmesh, app.kubernetes.io/component: web}}}], ports: [{port: 8080, protocol: TCP}]}]

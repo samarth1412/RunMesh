@@ -1,0 +1,119 @@
+openapi: 3.1.0
+info:
+  title: RunMesh API
+  version: 0.1.0
+  description: Multi-tenant workflow orchestration API. Task execution is at-least-once.
+servers:
+  - url: http://localhost:8080
+paths:
+  /v1/workflows:
+    get:
+      operationId: listWorkflows
+      responses: {"200": {description: Latest workflow definitions}}
+    post:
+      operationId: createWorkflow
+      requestBody: {required: true, content: {application/json: {schema: {$ref: '#/components/schemas/WorkflowInput'}}}}
+      responses: {"201": {description: Created}, "422": {description: Invalid DAG}}
+  /v1/workflows/{id}:
+    get:
+      operationId: getWorkflow
+      parameters: [{$ref: '#/components/parameters/ID'}]
+      responses: {"200": {description: Workflow definition}, "404": {description: Not found}}
+  /v1/workflows/{id}/versions:
+    post:
+      operationId: createWorkflowVersion
+      parameters: [{$ref: '#/components/parameters/ID'}]
+      requestBody: {required: true, content: {application/json: {schema: {$ref: '#/components/schemas/WorkflowInput'}}}}
+      responses: {"201": {description: Version created}}
+  /v1/workflows/{id}/runs:
+    post:
+      operationId: createRun
+      parameters:
+        - $ref: '#/components/parameters/ID'
+        - name: Idempotency-Key
+          in: header
+          required: true
+          schema: {type: string, maxLength: 200}
+      requestBody: {required: true, content: {application/json: {schema: {type: object, properties: {input: {type: object}}}}}}
+      responses: {"201": {description: Created}, "200": {description: Existing idempotent result}}
+  /v1/runs/{id}:
+    get:
+      operationId: getRun
+      parameters: [{$ref: '#/components/parameters/ID'}]
+      responses: {"200": {description: Run with tasks}, "404": {description: Not found}}
+  /v1/runs:
+    get:
+      operationId: listRuns
+      responses: {"200": {description: Recent tenant-scoped runs}}
+  /v1/runs/{id}/cancel:
+    post:
+      operationId: cancelRun
+      parameters: [{$ref: '#/components/parameters/ID'}]
+      responses: {"204": {description: Cancelled}, "409": {description: Terminal run}}
+  /v1/runs/{id}/retry:
+    post:
+      operationId: retryRun
+      parameters: [{$ref: '#/components/parameters/ID'}]
+      responses: {"202": {description: Dead tasks replayed}}
+  /v1/runs/{id}/events:
+    get:
+      operationId: getRunEvents
+      parameters: [{$ref: '#/components/parameters/ID'}]
+      responses: {"200": {description: Ordered event stream}}
+  /v1/workers:
+    get: {operationId: listWorkers, responses: {"200": {description: Workers}}}
+  /v1/dead-letter:
+    get: {operationId: listDeadLetter, responses: {"200": {description: Dead tasks}}}
+  /v1/dead-letter/{id}/replay:
+    post:
+      operationId: replayDeadTask
+      parameters: [{$ref: '#/components/parameters/ID'}]
+      responses: {"202": {description: Replayed}}
+  /v1/schedules:
+    post:
+      operationId: createSchedule
+      requestBody: {required: true, content: {application/json: {schema: {$ref: '#/components/schemas/ScheduleInput'}}}}
+      responses: {"201": {description: Schedule created}, "422": {description: Invalid cron or timezone}}
+  /v1/schedules/{id}:
+    patch:
+      operationId: patchSchedule
+      parameters: [{$ref: '#/components/parameters/ID'}]
+      requestBody: {required: true, content: {application/json: {schema: {type: object, properties: {enabled: {type: boolean}, next_execution_at: {type: string, format: date-time}}}}}}
+      responses: {"204": {description: Updated}}
+    delete:
+      operationId: deleteSchedule
+      parameters: [{$ref: '#/components/parameters/ID'}]
+      responses: {"204": {description: Deleted}}
+  /health/live:
+    get: {operationId: liveness, responses: {"200": {description: Process is live}}}
+  /health/ready:
+    get: {operationId: readiness, responses: {"200": {description: Dependencies are ready}, "503": {description: Dependency unavailable}}}
+components:
+  parameters:
+    ID: {name: id, in: path, required: true, schema: {type: string, format: uuid}}
+  schemas:
+    WorkflowInput:
+      type: object
+      required: [name, tasks]
+      properties:
+        name: {type: string}
+        tasks:
+          type: object
+          additionalProperties:
+            type: object
+            required: [handler]
+            properties:
+              handler: {type: string}
+              depends_on: {type: array, items: {type: string}}
+              maximum_attempts: {type: integer, minimum: 1, maximum: 100}
+              timeout_seconds: {type: integer, minimum: 1, maximum: 86400}
+              priority: {type: integer}
+    ScheduleInput:
+      type: object
+      required: [workflow_definition_id, cron_expression]
+      properties:
+        workflow_definition_id: {type: string, format: uuid}
+        cron_expression: {type: string, example: "0 * * * *"}
+        timezone: {type: string, default: UTC}
+        next_execution_at: {type: string, format: date-time}
+        misfire_policy: {type: string, enum: [skip, catch_up_once], default: skip}

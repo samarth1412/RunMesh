@@ -1,0 +1,133 @@
+name: runmesh
+services:
+  postgres:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_DB: runmesh
+      POSTGRES_USER: runmesh
+      POSTGRES_PASSWORD: runmesh
+    ports: ["5432:5432"]
+    volumes: ["postgres-data:/var/lib/postgresql/data"]
+    healthcheck: {test: ["CMD-SHELL", "pg_isready -U runmesh"], interval: 3s, timeout: 3s, retries: 20}
+
+  migrate:
+    image: migrate/migrate:v4.18.2
+    command: ["-path", "/migrations", "-database", "postgres://runmesh:runmesh@postgres:5432/runmesh?sslmode=disable", "up"]
+    volumes: ["./migrations:/migrations:ro"]
+    depends_on: {postgres: {condition: service_healthy}}
+
+  redpanda:
+    image: redpandadata/redpanda:v24.3.15
+    command: ["redpanda", "start", "--smp", "1", "--memory", "768M", "--reserve-memory", "0M", "--overprovisioned", "--node-id", "0", "--kafka-addr", "INTERNAL://0.0.0.0:9092,EXTERNAL://0.0.0.0:19092", "--advertise-kafka-addr", "INTERNAL://redpanda:9092,EXTERNAL://localhost:19092"]
+    ports: ["19092:19092", "9644:9644"]
+    volumes: ["redpanda-data:/var/lib/redpanda/data"]
+    healthcheck: {test: ["CMD-SHELL", "rpk cluster health | grep -q 'Healthy:.*true'"], interval: 5s, timeout: 5s, retries: 20}
+
+  redpanda-console:
+    image: redpandadata/console:v2.8.3
+    environment: {KAFKA_BROKERS: redpanda:9092}
+    ports: ["8081:8080"]
+    depends_on: {redpanda: {condition: service_healthy}}
+
+  redis:
+    image: redis:7.4-alpine
+    command: ["redis-server", "--appendonly", "yes"]
+    ports: ["6379:6379"]
+    volumes: ["redis-data:/data"]
+    healthcheck: {test: ["CMD", "redis-cli", "ping"], interval: 3s, timeout: 3s, retries: 20}
+
+  minio:
+    image: minio/minio:RELEASE.2025-02-07T23-21-09Z
+    command: ["server", "/data", "--console-address", ":9001"]
+    environment: {MINIO_ROOT_USER: runmesh, MINIO_ROOT_PASSWORD: runmesh-development}
+    ports: ["9000:9000", "9001:9001"]
+    volumes: ["minio-data:/data"]
+
+  keycloak:
+    image: quay.io/keycloak/keycloak:26.1
+    command: ["start-dev", "--http-port=8080"]
+    environment: {KC_BOOTSTRAP_ADMIN_USERNAME: admin, KC_BOOTSTRAP_ADMIN_PASSWORD: runmesh}
+    ports: ["8180:8080"]
+
+  control-plane:
+    build: {context: ., args: {SERVICE: control-plane}}
+    env_file: [deploy/docker/local.env]
+    ports: ["8080:8080", "7001:7001"]
+    depends_on:
+      migrate: {condition: service_completed_successfully}
+      redpanda: {condition: service_healthy}
+      redis: {condition: service_healthy}
+    healthcheck: {test: ["CMD", "/app/service", "--healthcheck"], interval: 10s, timeout: 3s, retries: 10}
+    restart: unless-stopped
+
+  scheduler:
+    build: {context: ., args: {SERVICE: scheduler}}
+    env_file: [deploy/docker/local.env]
+    depends_on:
+      migrate: {condition: service_completed_successfully}
+      redpanda: {condition: service_healthy}
+    restart: unless-stopped
+
+  worker-python:
+    build: {context: ., dockerfile: sdk/python/Dockerfile}
+    environment:
+      RUNMESH_ENDPOINT: control-plane:7001
+      RUNMESH_HTTP_ENDPOINT: control-plane:8080
+      RUNMESH_INTERNAL_TOKEN: local-development-token
+      RUNMESH_KAFKA_BROKERS: redpanda:9092
+    depends_on: {control-plane: {condition: service_started}, redpanda: {condition: service_healthy}}
+    restart: unless-stopped
+
+  worker-go:
+    build: {context: ., args: {SERVICE: worker-go}}
+    environment:
+      RUNMESH_ENDPOINT: control-plane:7001
+      RUNMESH_INTERNAL_TOKEN: local-development-token
+      RUNMESH_KAFKA_BROKERS: redpanda:9092
+    depends_on: {control-plane: {condition: service_started}, redpanda: {condition: service_healthy}}
+    restart: unless-stopped
+
+  web:
+    build: {context: ., dockerfile: web/Dockerfile}
+    ports: ["3000:3000"]
+    depends_on: [control-plane]
+    restart: unless-stopped
+
+  otel-collector:
+    image: otel/opentelemetry-collector-contrib:0.119.0
+    command: ["--config=/etc/otelcol/config.yaml"]
+    volumes: ["./deploy/docker/otel-collector.yaml:/etc/otelcol/config.yaml:ro"]
+    ports: ["4317:4317", "4318:4318", "8889:8889"]
+    depends_on: [tempo, loki]
+
+  prometheus:
+    image: prom/prometheus:v3.1.0
+    command: ["--config.file=/etc/prometheus/prometheus.yml"]
+    volumes: ["./deploy/docker/prometheus.yaml:/etc/prometheus/prometheus.yml:ro"]
+    ports: ["9090:9090"]
+
+  loki:
+    image: grafana/loki:3.3.2
+    command: ["-config.file=/etc/loki/local-config.yaml"]
+    ports: ["3100:3100"]
+
+  tempo:
+    image: grafana/tempo:2.6.1
+    command: ["-config.file=/etc/tempo.yaml"]
+    volumes: ["./deploy/docker/tempo.yaml:/etc/tempo.yaml:ro"]
+    ports: ["3200:3200"]
+
+  grafana:
+    image: grafana/grafana:11.4.0
+    environment: {GF_SECURITY_ADMIN_PASSWORD: runmesh, GF_USERS_ALLOW_SIGN_UP: "false"}
+    volumes:
+      - ./deploy/docker/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./deploy/docker/grafana/dashboards:/var/lib/grafana/dashboards:ro
+    ports: ["3001:3000"]
+    depends_on: [prometheus, loki, tempo]
+
+volumes:
+  postgres-data:
+  redpanda-data:
+  redis-data:
+  minio-data:

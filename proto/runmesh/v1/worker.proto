@@ -1,0 +1,48 @@
+syntax = "proto3";
+
+package runmesh.v1;
+option go_package = "github.com/runmesh/runmesh/gen/runmesh/v1;runmeshv1";
+
+import "google/protobuf/struct.proto";
+import "google/protobuf/timestamp.proto";
+
+service WorkerService {
+  rpc Lease(LeaseRequest) returns (LeaseResponse);
+  rpc Start(StartRequest) returns (StartResponse);
+  rpc Heartbeat(HeartbeatRequest) returns (HeartbeatResponse);
+  rpc Complete(CompleteRequest) returns (CompleteResponse);
+  rpc Fail(FailRequest) returns (FailResponse);
+}
+
+message LeaseRequest { string task_run_id = 1; string worker_id = 2; }
+message LeaseResponse { TaskSnapshot task = 1; }
+message StartRequest { string task_run_id = 1; string worker_id = 2; }
+message StartResponse { TaskSnapshot task = 1; }
+message HeartbeatRequest { string task_run_id = 1; string worker_id = 2; }
+message HeartbeatResponse { google.protobuf.Timestamp lease_expires_at = 1; bool cancelled = 2; }
+message CompleteRequest {
+  string task_run_id = 1;
+  string worker_id = 2;
+  google.protobuf.Struct output = 3;
+  string output_artifact_uri = 4;
+}
+message CompleteResponse { TaskSnapshot task = 1; }
+message FailRequest {
+  string task_run_id = 1;
+  string worker_id = 2;
+  bool retryable = 3;
+  string error_type = 4;
+  string error_message = 5;
+  string trace_id = 6;
+}
+message FailResponse { TaskSnapshot task = 1; }
+message TaskSnapshot {
+  string id = 1;
+  string workflow_run_id = 2;
+  string task_key = 3;
+  string handler = 4;
+  google.protobuf.Struct input = 5;
+  int32 attempt = 6;
+  int32 timeout_seconds = 7;
+  string status = 8;
+}

@@ -1,0 +1,36 @@
+[build-system]
+requires = ["hatchling>=1.27"]
+build-backend = "hatchling.build"
+
+[project]
+name = "runmesh"
+version = "0.1.0"
+description = "Python worker SDK for RunMesh"
+requires-python = ">=3.11"
+dependencies = ["aiohttp>=3.11,<4", "aiokafka>=0.12,<1", "grpcio>=1.74,<2", "protobuf>=7,<8"]
+
+[project.optional-dependencies]
+dev = ["pytest>=8", "pytest-asyncio>=0.25", "ruff>=0.9", "mypy>=1.14", "types-grpcio", "types-protobuf"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+extend-exclude = ["runmesh/v1"]
+
+[tool.mypy]
+python_version = "3.11"
+strict = true
+exclude = ["runmesh/v1"]
+
+[[tool.mypy.overrides]]
+module = ["aiokafka", "aiokafka.*"]
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = ["runmesh.v1.*"]
+follow_imports = "skip"
+ignore_errors = true

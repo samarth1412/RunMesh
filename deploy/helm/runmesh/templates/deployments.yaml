@@ -1,0 +1,47 @@
+{{- range $component, $replicas := dict "control-plane" .Values.replicas.controlPlane "scheduler" .Values.replicas.scheduler }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: runmesh-{{ $component }}
+  labels: {app.kubernetes.io/name: runmesh, app.kubernetes.io/component: {{ $component }}}
+spec:
+  replicas: {{ $replicas }}
+  strategy: {type: RollingUpdate, rollingUpdate: {maxUnavailable: 0, maxSurge: 1}}
+  selector: {matchLabels: {app.kubernetes.io/name: runmesh, app.kubernetes.io/component: {{ $component }}}}
+  template:
+    metadata: {labels: {app.kubernetes.io/name: runmesh, app.kubernetes.io/component: {{ $component }}}}
+    spec:
+      serviceAccountName: runmesh
+      securityContext: {runAsNonRoot: true, seccompProfile: {type: RuntimeDefault}}
+      containers:
+        - name: {{ $component }}
+          image: "{{ $.Values.image.repository }}:{{ $.Values.image.tag }}-{{ $component }}"
+          imagePullPolicy: {{ $.Values.image.pullPolicy }}
+          securityContext: {allowPrivilegeEscalation: false, readOnlyRootFilesystem: true, capabilities: {drop: ["ALL"]}}
+          envFrom: [{configMapRef: {name: runmesh}}, {secretRef: {name: runmesh}}]
+          {{- if eq $component "control-plane" }}
+          ports: [{name: http, containerPort: 8080}, {name: grpc, containerPort: 7001}]
+          readinessProbe: {httpGet: {path: /health/ready, port: http}, periodSeconds: 5}
+          livenessProbe: {httpGet: {path: /health/live, port: http}, periodSeconds: 10}
+          {{- end }}
+          resources:
+            {{- if eq $component "control-plane" }}{{ toYaml $.Values.resources.controlPlane | nindent 12 }}{{ else }}{{ toYaml $.Values.resources.scheduler | nindent 12 }}{{ end }}
+---
+{{- end }}
+apiVersion: apps/v1
+kind: Deployment
+metadata: {name: runmesh-web, labels: {app.kubernetes.io/name: runmesh, app.kubernetes.io/component: web}}
+spec:
+  replicas: {{ .Values.replicas.web }}
+  selector: {matchLabels: {app.kubernetes.io/name: runmesh, app.kubernetes.io/component: web}}
+  template:
+    metadata: {labels: {app.kubernetes.io/name: runmesh, app.kubernetes.io/component: web}}
+    spec:
+      serviceAccountName: runmesh
+      securityContext: {runAsNonRoot: true, seccompProfile: {type: RuntimeDefault}}
+      containers:
+        - name: web
+          image: "{{ .Values.webImage.repository }}:{{ .Values.webImage.tag }}"
+          ports: [{name: http, containerPort: 3000}]
+          securityContext: {allowPrivilegeEscalation: false, readOnlyRootFilesystem: true, capabilities: {drop: ["ALL"]}}
+          readinessProbe: {httpGet: {path: /, port: http}}
