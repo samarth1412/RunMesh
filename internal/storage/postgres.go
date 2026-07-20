@@ -125,7 +125,7 @@ func (s *Store) GetWorkflow(ctx context.Context, tenantID, id string) (workflow.
 	return d, err
 }
 
-func (s *Store) CreateRun(ctx context.Context, tenantID, userID, definitionID, idempotencyKey string, input json.RawMessage) (workflow.Run, bool, error) {
+func (s *Store) CreateRun(ctx context.Context, tenantID, userID, definitionID, idempotencyKey string, input json.RawMessage, inputArtifactIDs ...string) (workflow.Run, bool, error) {
 	if idempotencyKey == "" {
 		return workflow.Run{}, false, fmt.Errorf("idempotency key is required")
 	}
@@ -137,6 +137,19 @@ func (s *Store) CreateRun(ctx context.Context, tenantID, userID, definitionID, i
 		return workflow.Run{}, false, err
 	}
 	defer tx.Rollback(ctx)
+	var inputArtifactID, inputArtifactURI string
+	if len(inputArtifactIDs) > 0 {
+		inputArtifactID = inputArtifactIDs[0]
+	}
+	if inputArtifactID != "" {
+		err = tx.QueryRow(ctx, `SELECT object_uri FROM artifacts WHERE id=$1 AND tenant_id=$2 AND kind='input' AND status='READY' FOR UPDATE`, inputArtifactID, tenantID).Scan(&inputArtifactURI)
+		if errors.Is(err, pgx.ErrNoRows) {
+			return workflow.Run{}, false, ErrNotFound
+		}
+		if err != nil {
+			return workflow.Run{}, false, err
+		}
+	}
 	var version int
 	var dagRaw []byte
 	err = tx.QueryRow(ctx, `SELECT version,dag_spec FROM workflow_definitions WHERE id=$1 AND tenant_id=$2`, definitionID, tenantID).Scan(&version, &dagRaw)
@@ -152,13 +165,22 @@ func (s *Store) CreateRun(ctx context.Context, tenantID, userID, definitionID, i
 	}
 	var run workflow.Run
 	traceParent := tracecontext.FromContext(ctx)
-	err = tx.QueryRow(ctx, `INSERT INTO workflow_runs(tenant_id,workflow_definition_id,workflow_version,status,input,idempotency_key,started_at,trace_parent) VALUES($1,$2,$3,'RUNNING',$4,$5,now(),$6) ON CONFLICT(tenant_id,idempotency_key) DO NOTHING RETURNING id,workflow_definition_id,workflow_version,status,input,idempotency_key,started_at,completed_at,created_at`, tenantID, definitionID, version, input, idempotencyKey, traceParent).Scan(&run.ID, &run.WorkflowDefinitionID, &run.WorkflowVersion, &run.Status, &run.Input, &run.IdempotencyKey, &run.StartedAt, &run.CompletedAt, &run.CreatedAt)
+	err = tx.QueryRow(ctx, `INSERT INTO workflow_runs(tenant_id,workflow_definition_id,workflow_version,status,input,input_artifact_uri,idempotency_key,started_at,trace_parent) VALUES($1,$2,$3,'RUNNING',$4,NULLIF($5,''),$6,now(),$7) ON CONFLICT(tenant_id,idempotency_key) DO NOTHING RETURNING id,workflow_definition_id,workflow_version,status,input,input_artifact_uri,idempotency_key,started_at,completed_at,created_at`, tenantID, definitionID, version, input, inputArtifactURI, idempotencyKey, traceParent).Scan(&run.ID, &run.WorkflowDefinitionID, &run.WorkflowVersion, &run.Status, &run.Input, &run.InputArtifactURI, &run.IdempotencyKey, &run.StartedAt, &run.CompletedAt, &run.CreatedAt)
 	if errors.Is(err, pgx.ErrNoRows) {
 		existing, e := s.getRunTx(ctx, tx, tenantID, idempotencyKey)
 		return existing, false, e
 	}
 	if err != nil {
 		return run, false, err
+	}
+	if inputArtifactID != "" {
+		command, updateErr := tx.Exec(ctx, `UPDATE artifacts SET workflow_run_id=$2 WHERE id=$1 AND workflow_run_id IS NULL`, inputArtifactID, run.ID)
+		if updateErr != nil {
+			return run, false, updateErr
+		}
+		if command.RowsAffected() != 1 {
+			return run, false, ErrConflict
+		}
 	}
 	ids := make(map[string]string, len(dag.Tasks))
 	for key := range dag.Tasks {
@@ -200,27 +222,27 @@ func (s *Store) CreateRun(ctx context.Context, tenantID, userID, definitionID, i
 
 func (s *Store) getRunTx(ctx context.Context, tx pgx.Tx, tenantID, idempotencyKey string) (workflow.Run, error) {
 	var r workflow.Run
-	err := tx.QueryRow(ctx, `SELECT id,workflow_definition_id,workflow_version,status,input,idempotency_key,started_at,completed_at,created_at FROM workflow_runs WHERE tenant_id=$1 AND idempotency_key=$2`, tenantID, idempotencyKey).Scan(&r.ID, &r.WorkflowDefinitionID, &r.WorkflowVersion, &r.Status, &r.Input, &r.IdempotencyKey, &r.StartedAt, &r.CompletedAt, &r.CreatedAt)
+	err := tx.QueryRow(ctx, `SELECT id,workflow_definition_id,workflow_version,status,input,input_artifact_uri,idempotency_key,started_at,completed_at,created_at FROM workflow_runs WHERE tenant_id=$1 AND idempotency_key=$2`, tenantID, idempotencyKey).Scan(&r.ID, &r.WorkflowDefinitionID, &r.WorkflowVersion, &r.Status, &r.Input, &r.InputArtifactURI, &r.IdempotencyKey, &r.StartedAt, &r.CompletedAt, &r.CreatedAt)
 	return r, err
 }
 
 func (s *Store) GetRun(ctx context.Context, tenantID, id string) (workflow.Run, error) {
 	var r workflow.Run
-	err := s.Pool.QueryRow(ctx, `SELECT id,workflow_definition_id,workflow_version,status,input,idempotency_key,started_at,completed_at,created_at FROM workflow_runs WHERE id=$1 AND tenant_id=$2`, id, tenantID).Scan(&r.ID, &r.WorkflowDefinitionID, &r.WorkflowVersion, &r.Status, &r.Input, &r.IdempotencyKey, &r.StartedAt, &r.CompletedAt, &r.CreatedAt)
+	err := s.Pool.QueryRow(ctx, `SELECT id,workflow_definition_id,workflow_version,status,input,input_artifact_uri,idempotency_key,started_at,completed_at,created_at FROM workflow_runs WHERE id=$1 AND tenant_id=$2`, id, tenantID).Scan(&r.ID, &r.WorkflowDefinitionID, &r.WorkflowVersion, &r.Status, &r.Input, &r.InputArtifactURI, &r.IdempotencyKey, &r.StartedAt, &r.CompletedAt, &r.CreatedAt)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return r, ErrNotFound
 	}
 	if err != nil {
 		return r, err
 	}
-	rows, err := s.Pool.Query(ctx, `SELECT id,workflow_run_id,task_key,handler,status,priority,available_at,attempt_count,maximum_attempts,timeout_seconds,lease_owner,lease_expires_at,input,output,output_artifact_uri FROM task_runs WHERE workflow_run_id=$1 ORDER BY created_at,task_key`, id)
+	rows, err := s.Pool.Query(ctx, `SELECT id,workflow_run_id,task_key,handler,status,priority,available_at,attempt_count,maximum_attempts,timeout_seconds,lease_owner,lease_expires_at,input,output,output_artifact_uri,(SELECT log_artifact_uri FROM task_attempts WHERE task_run_id=task_runs.id AND log_artifact_uri IS NOT NULL ORDER BY attempt_number DESC LIMIT 1) FROM task_runs WHERE workflow_run_id=$1 ORDER BY created_at,task_key`, id)
 	if err != nil {
 		return r, err
 	}
 	defer rows.Close()
 	for rows.Next() {
 		var t workflow.TaskRun
-		if err = rows.Scan(&t.ID, &t.WorkflowRunID, &t.TaskKey, &t.Handler, &t.Status, &t.Priority, &t.AvailableAt, &t.AttemptCount, &t.MaximumAttempts, &t.TimeoutSeconds, &t.LeaseOwner, &t.LeaseExpiresAt, &t.Input, &t.Output, &t.OutputArtifactURI); err != nil {
+		if err = rows.Scan(&t.ID, &t.WorkflowRunID, &t.TaskKey, &t.Handler, &t.Status, &t.Priority, &t.AvailableAt, &t.AttemptCount, &t.MaximumAttempts, &t.TimeoutSeconds, &t.LeaseOwner, &t.LeaseExpiresAt, &t.Input, &t.Output, &t.OutputArtifactURI, &t.LogArtifactURI); err != nil {
 			return r, err
 		}
 		r.Tasks = append(r.Tasks, t)
@@ -232,7 +254,7 @@ func (s *Store) ListRuns(ctx context.Context, tenantID string, limit int) ([]wor
 	if limit < 1 || limit > 200 {
 		limit = 50
 	}
-	rows, err := s.Pool.Query(ctx, `SELECT id,workflow_definition_id,workflow_version,status,input,idempotency_key,started_at,completed_at,created_at FROM workflow_runs WHERE tenant_id=$1 ORDER BY created_at DESC LIMIT $2`, tenantID, limit)
+	rows, err := s.Pool.Query(ctx, `SELECT id,workflow_definition_id,workflow_version,status,input,input_artifact_uri,idempotency_key,started_at,completed_at,created_at FROM workflow_runs WHERE tenant_id=$1 ORDER BY created_at DESC LIMIT $2`, tenantID, limit)
 	if err != nil {
 		return nil, err
 	}
@@ -240,7 +262,7 @@ func (s *Store) ListRuns(ctx context.Context, tenantID string, limit int) ([]wor
 	var out []workflow.Run
 	for rows.Next() {
 		var r workflow.Run
-		if err = rows.Scan(&r.ID, &r.WorkflowDefinitionID, &r.WorkflowVersion, &r.Status, &r.Input, &r.IdempotencyKey, &r.StartedAt, &r.CompletedAt, &r.CreatedAt); err != nil {
+		if err = rows.Scan(&r.ID, &r.WorkflowDefinitionID, &r.WorkflowVersion, &r.Status, &r.Input, &r.InputArtifactURI, &r.IdempotencyKey, &r.StartedAt, &r.CompletedAt, &r.CreatedAt); err != nil {
 			return nil, err
 		}
 		out = append(out, r)

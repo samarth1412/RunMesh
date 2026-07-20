@@ -19,11 +19,14 @@ import (
 const _ = grpc.SupportPackageIsVersion9
 
 const (
-	WorkerService_Lease_FullMethodName     = "/runmesh.v1.WorkerService/Lease"
-	WorkerService_Start_FullMethodName     = "/runmesh.v1.WorkerService/Start"
-	WorkerService_Heartbeat_FullMethodName = "/runmesh.v1.WorkerService/Heartbeat"
-	WorkerService_Complete_FullMethodName  = "/runmesh.v1.WorkerService/Complete"
-	WorkerService_Fail_FullMethodName      = "/runmesh.v1.WorkerService/Fail"
+	WorkerService_Lease_FullMethodName                  = "/runmesh.v1.WorkerService/Lease"
+	WorkerService_Start_FullMethodName                  = "/runmesh.v1.WorkerService/Start"
+	WorkerService_Heartbeat_FullMethodName              = "/runmesh.v1.WorkerService/Heartbeat"
+	WorkerService_Complete_FullMethodName               = "/runmesh.v1.WorkerService/Complete"
+	WorkerService_Fail_FullMethodName                   = "/runmesh.v1.WorkerService/Fail"
+	WorkerService_CreateArtifactUpload_FullMethodName   = "/runmesh.v1.WorkerService/CreateArtifactUpload"
+	WorkerService_CompleteArtifactUpload_FullMethodName = "/runmesh.v1.WorkerService/CompleteArtifactUpload"
+	WorkerService_GetArtifactDownload_FullMethodName    = "/runmesh.v1.WorkerService/GetArtifactDownload"
 )
 
 // WorkerServiceClient is the client API for WorkerService service.
@@ -35,6 +38,9 @@ type WorkerServiceClient interface {
 	Heartbeat(ctx context.Context, in *HeartbeatRequest, opts ...grpc.CallOption) (*HeartbeatResponse, error)
 	Complete(ctx context.Context, in *CompleteRequest, opts ...grpc.CallOption) (*CompleteResponse, error)
 	Fail(ctx context.Context, in *FailRequest, opts ...grpc.CallOption) (*FailResponse, error)
+	CreateArtifactUpload(ctx context.Context, in *CreateArtifactUploadRequest, opts ...grpc.CallOption) (*CreateArtifactUploadResponse, error)
+	CompleteArtifactUpload(ctx context.Context, in *CompleteArtifactUploadRequest, opts ...grpc.CallOption) (*CompleteArtifactUploadResponse, error)
+	GetArtifactDownload(ctx context.Context, in *GetArtifactDownloadRequest, opts ...grpc.CallOption) (*GetArtifactDownloadResponse, error)
 }
 
 type workerServiceClient struct {
@@ -95,6 +101,36 @@ func (c *workerServiceClient) Fail(ctx context.Context, in *FailRequest, opts ..
 	return out, nil
 }
 
+func (c *workerServiceClient) CreateArtifactUpload(ctx context.Context, in *CreateArtifactUploadRequest, opts ...grpc.CallOption) (*CreateArtifactUploadResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(CreateArtifactUploadResponse)
+	err := c.cc.Invoke(ctx, WorkerService_CreateArtifactUpload_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *workerServiceClient) CompleteArtifactUpload(ctx context.Context, in *CompleteArtifactUploadRequest, opts ...grpc.CallOption) (*CompleteArtifactUploadResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(CompleteArtifactUploadResponse)
+	err := c.cc.Invoke(ctx, WorkerService_CompleteArtifactUpload_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *workerServiceClient) GetArtifactDownload(ctx context.Context, in *GetArtifactDownloadRequest, opts ...grpc.CallOption) (*GetArtifactDownloadResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(GetArtifactDownloadResponse)
+	err := c.cc.Invoke(ctx, WorkerService_GetArtifactDownload_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // WorkerServiceServer is the server API for WorkerService service.
 // All implementations must embed UnimplementedWorkerServiceServer
 // for forward compatibility.
@@ -104,6 +140,9 @@ type WorkerServiceServer interface {
 	Heartbeat(context.Context, *HeartbeatRequest) (*HeartbeatResponse, error)
 	Complete(context.Context, *CompleteRequest) (*CompleteResponse, error)
 	Fail(context.Context, *FailRequest) (*FailResponse, error)
+	CreateArtifactUpload(context.Context, *CreateArtifactUploadRequest) (*CreateArtifactUploadResponse, error)
+	CompleteArtifactUpload(context.Context, *CompleteArtifactUploadRequest) (*CompleteArtifactUploadResponse, error)
+	GetArtifactDownload(context.Context, *GetArtifactDownloadRequest) (*GetArtifactDownloadResponse, error)
 	mustEmbedUnimplementedWorkerServiceServer()
 }
 
@@ -128,6 +167,15 @@ func (UnimplementedWorkerServiceServer) Complete(context.Context, *CompleteReque
 }
 func (UnimplementedWorkerServiceServer) Fail(context.Context, *FailRequest) (*FailResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method Fail not implemented")
+}
+func (UnimplementedWorkerServiceServer) CreateArtifactUpload(context.Context, *CreateArtifactUploadRequest) (*CreateArtifactUploadResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method CreateArtifactUpload not implemented")
+}
+func (UnimplementedWorkerServiceServer) CompleteArtifactUpload(context.Context, *CompleteArtifactUploadRequest) (*CompleteArtifactUploadResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method CompleteArtifactUpload not implemented")
+}
+func (UnimplementedWorkerServiceServer) GetArtifactDownload(context.Context, *GetArtifactDownloadRequest) (*GetArtifactDownloadResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method GetArtifactDownload not implemented")
 }
 func (UnimplementedWorkerServiceServer) mustEmbedUnimplementedWorkerServiceServer() {}
 func (UnimplementedWorkerServiceServer) testEmbeddedByValue()                       {}
@@ -240,6 +288,60 @@ func _WorkerService_Fail_Handler(srv interface{}, ctx context.Context, dec func(
 	return interceptor(ctx, in, info, handler)
 }
 
+func _WorkerService_CreateArtifactUpload_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(CreateArtifactUploadRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(WorkerServiceServer).CreateArtifactUpload(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: WorkerService_CreateArtifactUpload_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(WorkerServiceServer).CreateArtifactUpload(ctx, req.(*CreateArtifactUploadRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _WorkerService_CompleteArtifactUpload_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(CompleteArtifactUploadRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(WorkerServiceServer).CompleteArtifactUpload(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: WorkerService_CompleteArtifactUpload_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(WorkerServiceServer).CompleteArtifactUpload(ctx, req.(*CompleteArtifactUploadRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _WorkerService_GetArtifactDownload_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(GetArtifactDownloadRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(WorkerServiceServer).GetArtifactDownload(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: WorkerService_GetArtifactDownload_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(WorkerServiceServer).GetArtifactDownload(ctx, req.(*GetArtifactDownloadRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // WorkerService_ServiceDesc is the grpc.ServiceDesc for WorkerService service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -266,6 +368,18 @@ var WorkerService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "Fail",
 			Handler:    _WorkerService_Fail_Handler,
+		},
+		{
+			MethodName: "CreateArtifactUpload",
+			Handler:    _WorkerService_CreateArtifactUpload_Handler,
+		},
+		{
+			MethodName: "CompleteArtifactUpload",
+			Handler:    _WorkerService_CompleteArtifactUpload_Handler,
+		},
+		{
+			MethodName: "GetArtifactDownload",
+			Handler:    _WorkerService_GetArtifactDownload_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},

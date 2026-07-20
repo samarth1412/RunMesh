@@ -35,6 +35,9 @@ func (s *Store) LeaseTask(ctx context.Context, taskID, workerID string, lease ti
 	if err != nil {
 		return t, err
 	}
+	if err = tx.QueryRow(ctx, `SELECT input_artifact_uri FROM workflow_runs WHERE id=$1`, t.WorkflowRunID).Scan(&t.InputArtifactURI); err != nil {
+		return t, err
+	}
 	_, err = tx.Exec(ctx, `INSERT INTO task_attempts(task_run_id,attempt_number,worker_id) VALUES($1,$2,$3)`, t.ID, t.AttemptCount, workerID)
 	if err != nil {
 		return t, err
@@ -85,7 +88,7 @@ func (s *Store) HeartbeatTask(ctx context.Context, taskID, workerID string, leas
 	return expires, cancelled, err
 }
 
-func (s *Store) CompleteTask(ctx context.Context, taskID, workerID string, output json.RawMessage, artifactURI string) (workflow.TaskRun, error) {
+func (s *Store) CompleteTask(ctx context.Context, taskID, workerID string, output json.RawMessage, artifactURI string, logArtifactURIs ...string) (workflow.TaskRun, error) {
 	if len(output) == 0 {
 		output = []byte(`{}`)
 	}
@@ -113,7 +116,11 @@ func (s *Store) CompleteTask(ctx context.Context, taskID, workerID string, outpu
 	if err != nil {
 		return t, err
 	}
-	_, err = tx.Exec(ctx, `UPDATE task_attempts SET ended_at=now(),exit_status='SUCCEEDED',artifact_uri=NULLIF($3,'') WHERE task_run_id=$1 AND attempt_number=$2`, t.ID, t.AttemptCount, artifactURI)
+	var logArtifactURI string
+	if len(logArtifactURIs) > 0 {
+		logArtifactURI = logArtifactURIs[0]
+	}
+	_, err = tx.Exec(ctx, `UPDATE task_attempts SET ended_at=now(),exit_status='SUCCEEDED',artifact_uri=NULLIF($3,''),log_artifact_uri=NULLIF($4,'') WHERE task_run_id=$1 AND attempt_number=$2`, t.ID, t.AttemptCount, artifactURI, logArtifactURI)
 	if err != nil {
 		return t, err
 	}

@@ -13,6 +13,7 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 	runmeshv1 "github.com/runmesh/runmesh/gen/runmesh/v1"
 	"github.com/runmesh/runmesh/internal/api"
+	"github.com/runmesh/runmesh/internal/artifact"
 	"github.com/runmesh/runmesh/internal/auth"
 	"github.com/runmesh/runmesh/internal/config"
 	"github.com/runmesh/runmesh/internal/ratelimit"
@@ -53,6 +54,15 @@ func main() {
 		os.Exit(1)
 	}
 	defer store.Close()
+	artifactManager, err := artifact.New(ctx, store, artifact.Config{
+		Endpoint: cfg.ArtifactEndpoint, Region: cfg.ArtifactRegion, Bucket: cfg.ArtifactBucket,
+		AccessKey: cfg.ArtifactAccessKey, SecretKey: cfg.ArtifactSecretKey,
+		PathStyle: cfg.ArtifactPathStyle, CreateBucket: cfg.ArtifactCreateBucket, PresignExpiry: cfg.ArtifactPresignExpiry,
+	})
+	if err != nil {
+		slog.Error("artifact storage", "error", err)
+		os.Exit(1)
+	}
 	prometheus.MustRegister(telemetry.NewDatabaseCollector(store))
 	authenticator := auth.New(store.Pool, auth.Config{
 		Dev: cfg.DevAuth, DevPrincipal: auth.Principal{TenantID: cfg.DevTenantID, UserID: cfg.DevUserID, Role: cfg.DevRole}, DevWorkerToken: cfg.InternalToken,
@@ -68,14 +78,14 @@ func main() {
 	if !cfg.RateLimitFailOpen {
 		redisReady = limiter.Ping
 	}
-	server := api.New(store, cfg.LeaseDuration, authenticator.Middleware, authenticator.WorkerMiddleware, limiter.Middleware, redisReady, cfg.APIKeyPepper)
+	server := api.New(store, cfg.LeaseDuration, authenticator.Middleware, authenticator.WorkerMiddleware, limiter.Middleware, redisReady, cfg.APIKeyPepper, artifactManager)
 	grpcListener, err := net.Listen("tcp", cfg.GRPCAddr)
 	if err != nil {
 		slog.Error("gRPC listener", "error", err)
 		os.Exit(1)
 	}
 	grpcServer := grpc.NewServer(grpc.StatsHandler(otelgrpc.NewServerHandler()))
-	runmeshv1.RegisterWorkerServiceServer(grpcServer, &workerrpc.WorkerServer{Store: store, LeaseDuration: cfg.LeaseDuration, Authenticator: authenticator})
+	runmeshv1.RegisterWorkerServiceServer(grpcServer, &workerrpc.WorkerServer{Store: store, LeaseDuration: cfg.LeaseDuration, Authenticator: authenticator, Artifacts: artifactManager})
 	go func() {
 		if serveErr := grpcServer.Serve(grpcListener); serveErr != nil {
 			slog.Error("gRPC server", "error", serveErr)

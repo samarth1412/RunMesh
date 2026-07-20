@@ -325,6 +325,7 @@ type CompleteRequest struct {
 	WorkerId          string                 `protobuf:"bytes,2,opt,name=worker_id,json=workerId,proto3" json:"worker_id,omitempty"`
 	Output            *structpb.Struct       `protobuf:"bytes,3,opt,name=output,proto3" json:"output,omitempty"`
 	OutputArtifactUri string                 `protobuf:"bytes,4,opt,name=output_artifact_uri,json=outputArtifactUri,proto3" json:"output_artifact_uri,omitempty"`
+	LogArtifactUri    string                 `protobuf:"bytes,5,opt,name=log_artifact_uri,json=logArtifactUri,proto3" json:"log_artifact_uri,omitempty"`
 	unknownFields     protoimpl.UnknownFields
 	sizeCache         protoimpl.SizeCache
 }
@@ -383,6 +384,13 @@ func (x *CompleteRequest) GetOutput() *structpb.Struct {
 func (x *CompleteRequest) GetOutputArtifactUri() string {
 	if x != nil {
 		return x.OutputArtifactUri
+	}
+	return ""
+}
+
+func (x *CompleteRequest) GetLogArtifactUri() string {
+	if x != nil {
+		return x.LogArtifactUri
 	}
 	return ""
 }
@@ -560,17 +568,18 @@ func (x *FailResponse) GetTask() *TaskSnapshot {
 }
 
 type TaskSnapshot struct {
-	state          protoimpl.MessageState `protogen:"open.v1"`
-	Id             string                 `protobuf:"bytes,1,opt,name=id,proto3" json:"id,omitempty"`
-	WorkflowRunId  string                 `protobuf:"bytes,2,opt,name=workflow_run_id,json=workflowRunId,proto3" json:"workflow_run_id,omitempty"`
-	TaskKey        string                 `protobuf:"bytes,3,opt,name=task_key,json=taskKey,proto3" json:"task_key,omitempty"`
-	Handler        string                 `protobuf:"bytes,4,opt,name=handler,proto3" json:"handler,omitempty"`
-	Input          *structpb.Struct       `protobuf:"bytes,5,opt,name=input,proto3" json:"input,omitempty"`
-	Attempt        int32                  `protobuf:"varint,6,opt,name=attempt,proto3" json:"attempt,omitempty"`
-	TimeoutSeconds int32                  `protobuf:"varint,7,opt,name=timeout_seconds,json=timeoutSeconds,proto3" json:"timeout_seconds,omitempty"`
-	Status         string                 `protobuf:"bytes,8,opt,name=status,proto3" json:"status,omitempty"`
-	unknownFields  protoimpl.UnknownFields
-	sizeCache      protoimpl.SizeCache
+	state            protoimpl.MessageState `protogen:"open.v1"`
+	Id               string                 `protobuf:"bytes,1,opt,name=id,proto3" json:"id,omitempty"`
+	WorkflowRunId    string                 `protobuf:"bytes,2,opt,name=workflow_run_id,json=workflowRunId,proto3" json:"workflow_run_id,omitempty"`
+	TaskKey          string                 `protobuf:"bytes,3,opt,name=task_key,json=taskKey,proto3" json:"task_key,omitempty"`
+	Handler          string                 `protobuf:"bytes,4,opt,name=handler,proto3" json:"handler,omitempty"`
+	Input            *structpb.Struct       `protobuf:"bytes,5,opt,name=input,proto3" json:"input,omitempty"`
+	Attempt          int32                  `protobuf:"varint,6,opt,name=attempt,proto3" json:"attempt,omitempty"`
+	TimeoutSeconds   int32                  `protobuf:"varint,7,opt,name=timeout_seconds,json=timeoutSeconds,proto3" json:"timeout_seconds,omitempty"`
+	Status           string                 `protobuf:"bytes,8,opt,name=status,proto3" json:"status,omitempty"`
+	InputArtifactUri string                 `protobuf:"bytes,9,opt,name=input_artifact_uri,json=inputArtifactUri,proto3" json:"input_artifact_uri,omitempty"`
+	unknownFields    protoimpl.UnknownFields
+	sizeCache        protoimpl.SizeCache
 }
 
 func (x *TaskSnapshot) Reset() {
@@ -659,6 +668,389 @@ func (x *TaskSnapshot) GetStatus() string {
 	return ""
 }
 
+func (x *TaskSnapshot) GetInputArtifactUri() string {
+	if x != nil {
+		return x.InputArtifactUri
+	}
+	return ""
+}
+
+type CreateArtifactUploadRequest struct {
+	state          protoimpl.MessageState `protogen:"open.v1"`
+	TaskRunId      string                 `protobuf:"bytes,1,opt,name=task_run_id,json=taskRunId,proto3" json:"task_run_id,omitempty"`
+	WorkerId       string                 `protobuf:"bytes,2,opt,name=worker_id,json=workerId,proto3" json:"worker_id,omitempty"`
+	Kind           string                 `protobuf:"bytes,3,opt,name=kind,proto3" json:"kind,omitempty"`
+	ContentType    string                 `protobuf:"bytes,4,opt,name=content_type,json=contentType,proto3" json:"content_type,omitempty"`
+	SizeBytes      int64                  `protobuf:"varint,5,opt,name=size_bytes,json=sizeBytes,proto3" json:"size_bytes,omitempty"`
+	ChecksumSha256 string                 `protobuf:"bytes,6,opt,name=checksum_sha256,json=checksumSha256,proto3" json:"checksum_sha256,omitempty"`
+	unknownFields  protoimpl.UnknownFields
+	sizeCache      protoimpl.SizeCache
+}
+
+func (x *CreateArtifactUploadRequest) Reset() {
+	*x = CreateArtifactUploadRequest{}
+	mi := &file_runmesh_v1_worker_proto_msgTypes[11]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *CreateArtifactUploadRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*CreateArtifactUploadRequest) ProtoMessage() {}
+
+func (x *CreateArtifactUploadRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_runmesh_v1_worker_proto_msgTypes[11]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use CreateArtifactUploadRequest.ProtoReflect.Descriptor instead.
+func (*CreateArtifactUploadRequest) Descriptor() ([]byte, []int) {
+	return file_runmesh_v1_worker_proto_rawDescGZIP(), []int{11}
+}
+
+func (x *CreateArtifactUploadRequest) GetTaskRunId() string {
+	if x != nil {
+		return x.TaskRunId
+	}
+	return ""
+}
+
+func (x *CreateArtifactUploadRequest) GetWorkerId() string {
+	if x != nil {
+		return x.WorkerId
+	}
+	return ""
+}
+
+func (x *CreateArtifactUploadRequest) GetKind() string {
+	if x != nil {
+		return x.Kind
+	}
+	return ""
+}
+
+func (x *CreateArtifactUploadRequest) GetContentType() string {
+	if x != nil {
+		return x.ContentType
+	}
+	return ""
+}
+
+func (x *CreateArtifactUploadRequest) GetSizeBytes() int64 {
+	if x != nil {
+		return x.SizeBytes
+	}
+	return 0
+}
+
+func (x *CreateArtifactUploadRequest) GetChecksumSha256() string {
+	if x != nil {
+		return x.ChecksumSha256
+	}
+	return ""
+}
+
+type CreateArtifactUploadResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	ArtifactId    string                 `protobuf:"bytes,1,opt,name=artifact_id,json=artifactId,proto3" json:"artifact_id,omitempty"`
+	ArtifactUri   string                 `protobuf:"bytes,2,opt,name=artifact_uri,json=artifactUri,proto3" json:"artifact_uri,omitempty"`
+	UploadUrl     string                 `protobuf:"bytes,3,opt,name=upload_url,json=uploadUrl,proto3" json:"upload_url,omitempty"`
+	Headers       map[string]string      `protobuf:"bytes,4,rep,name=headers,proto3" json:"headers,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
+	ExpiresAt     *timestamppb.Timestamp `protobuf:"bytes,5,opt,name=expires_at,json=expiresAt,proto3" json:"expires_at,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *CreateArtifactUploadResponse) Reset() {
+	*x = CreateArtifactUploadResponse{}
+	mi := &file_runmesh_v1_worker_proto_msgTypes[12]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *CreateArtifactUploadResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*CreateArtifactUploadResponse) ProtoMessage() {}
+
+func (x *CreateArtifactUploadResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_runmesh_v1_worker_proto_msgTypes[12]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use CreateArtifactUploadResponse.ProtoReflect.Descriptor instead.
+func (*CreateArtifactUploadResponse) Descriptor() ([]byte, []int) {
+	return file_runmesh_v1_worker_proto_rawDescGZIP(), []int{12}
+}
+
+func (x *CreateArtifactUploadResponse) GetArtifactId() string {
+	if x != nil {
+		return x.ArtifactId
+	}
+	return ""
+}
+
+func (x *CreateArtifactUploadResponse) GetArtifactUri() string {
+	if x != nil {
+		return x.ArtifactUri
+	}
+	return ""
+}
+
+func (x *CreateArtifactUploadResponse) GetUploadUrl() string {
+	if x != nil {
+		return x.UploadUrl
+	}
+	return ""
+}
+
+func (x *CreateArtifactUploadResponse) GetHeaders() map[string]string {
+	if x != nil {
+		return x.Headers
+	}
+	return nil
+}
+
+func (x *CreateArtifactUploadResponse) GetExpiresAt() *timestamppb.Timestamp {
+	if x != nil {
+		return x.ExpiresAt
+	}
+	return nil
+}
+
+type CompleteArtifactUploadRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	ArtifactId    string                 `protobuf:"bytes,1,opt,name=artifact_id,json=artifactId,proto3" json:"artifact_id,omitempty"`
+	WorkerId      string                 `protobuf:"bytes,2,opt,name=worker_id,json=workerId,proto3" json:"worker_id,omitempty"`
+	TaskRunId     string                 `protobuf:"bytes,3,opt,name=task_run_id,json=taskRunId,proto3" json:"task_run_id,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *CompleteArtifactUploadRequest) Reset() {
+	*x = CompleteArtifactUploadRequest{}
+	mi := &file_runmesh_v1_worker_proto_msgTypes[13]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *CompleteArtifactUploadRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*CompleteArtifactUploadRequest) ProtoMessage() {}
+
+func (x *CompleteArtifactUploadRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_runmesh_v1_worker_proto_msgTypes[13]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use CompleteArtifactUploadRequest.ProtoReflect.Descriptor instead.
+func (*CompleteArtifactUploadRequest) Descriptor() ([]byte, []int) {
+	return file_runmesh_v1_worker_proto_rawDescGZIP(), []int{13}
+}
+
+func (x *CompleteArtifactUploadRequest) GetArtifactId() string {
+	if x != nil {
+		return x.ArtifactId
+	}
+	return ""
+}
+
+func (x *CompleteArtifactUploadRequest) GetWorkerId() string {
+	if x != nil {
+		return x.WorkerId
+	}
+	return ""
+}
+
+func (x *CompleteArtifactUploadRequest) GetTaskRunId() string {
+	if x != nil {
+		return x.TaskRunId
+	}
+	return ""
+}
+
+type CompleteArtifactUploadResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	ArtifactUri   string                 `protobuf:"bytes,1,opt,name=artifact_uri,json=artifactUri,proto3" json:"artifact_uri,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *CompleteArtifactUploadResponse) Reset() {
+	*x = CompleteArtifactUploadResponse{}
+	mi := &file_runmesh_v1_worker_proto_msgTypes[14]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *CompleteArtifactUploadResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*CompleteArtifactUploadResponse) ProtoMessage() {}
+
+func (x *CompleteArtifactUploadResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_runmesh_v1_worker_proto_msgTypes[14]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use CompleteArtifactUploadResponse.ProtoReflect.Descriptor instead.
+func (*CompleteArtifactUploadResponse) Descriptor() ([]byte, []int) {
+	return file_runmesh_v1_worker_proto_rawDescGZIP(), []int{14}
+}
+
+func (x *CompleteArtifactUploadResponse) GetArtifactUri() string {
+	if x != nil {
+		return x.ArtifactUri
+	}
+	return ""
+}
+
+type GetArtifactDownloadRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	ArtifactUri   string                 `protobuf:"bytes,1,opt,name=artifact_uri,json=artifactUri,proto3" json:"artifact_uri,omitempty"`
+	WorkerId      string                 `protobuf:"bytes,2,opt,name=worker_id,json=workerId,proto3" json:"worker_id,omitempty"`
+	TaskRunId     string                 `protobuf:"bytes,3,opt,name=task_run_id,json=taskRunId,proto3" json:"task_run_id,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *GetArtifactDownloadRequest) Reset() {
+	*x = GetArtifactDownloadRequest{}
+	mi := &file_runmesh_v1_worker_proto_msgTypes[15]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *GetArtifactDownloadRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*GetArtifactDownloadRequest) ProtoMessage() {}
+
+func (x *GetArtifactDownloadRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_runmesh_v1_worker_proto_msgTypes[15]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use GetArtifactDownloadRequest.ProtoReflect.Descriptor instead.
+func (*GetArtifactDownloadRequest) Descriptor() ([]byte, []int) {
+	return file_runmesh_v1_worker_proto_rawDescGZIP(), []int{15}
+}
+
+func (x *GetArtifactDownloadRequest) GetArtifactUri() string {
+	if x != nil {
+		return x.ArtifactUri
+	}
+	return ""
+}
+
+func (x *GetArtifactDownloadRequest) GetWorkerId() string {
+	if x != nil {
+		return x.WorkerId
+	}
+	return ""
+}
+
+func (x *GetArtifactDownloadRequest) GetTaskRunId() string {
+	if x != nil {
+		return x.TaskRunId
+	}
+	return ""
+}
+
+type GetArtifactDownloadResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	DownloadUrl   string                 `protobuf:"bytes,1,opt,name=download_url,json=downloadUrl,proto3" json:"download_url,omitempty"`
+	ExpiresAt     *timestamppb.Timestamp `protobuf:"bytes,2,opt,name=expires_at,json=expiresAt,proto3" json:"expires_at,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *GetArtifactDownloadResponse) Reset() {
+	*x = GetArtifactDownloadResponse{}
+	mi := &file_runmesh_v1_worker_proto_msgTypes[16]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *GetArtifactDownloadResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*GetArtifactDownloadResponse) ProtoMessage() {}
+
+func (x *GetArtifactDownloadResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_runmesh_v1_worker_proto_msgTypes[16]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use GetArtifactDownloadResponse.ProtoReflect.Descriptor instead.
+func (*GetArtifactDownloadResponse) Descriptor() ([]byte, []int) {
+	return file_runmesh_v1_worker_proto_rawDescGZIP(), []int{16}
+}
+
+func (x *GetArtifactDownloadResponse) GetDownloadUrl() string {
+	if x != nil {
+		return x.DownloadUrl
+	}
+	return ""
+}
+
+func (x *GetArtifactDownloadResponse) GetExpiresAt() *timestamppb.Timestamp {
+	if x != nil {
+		return x.ExpiresAt
+	}
+	return nil
+}
+
 var File_runmesh_v1_worker_proto protoreflect.FileDescriptor
 
 const file_runmesh_v1_worker_proto_rawDesc = "" +
@@ -680,12 +1072,13 @@ const file_runmesh_v1_worker_proto_rawDesc = "" +
 	"\tworker_id\x18\x02 \x01(\tR\bworkerId\"w\n" +
 	"\x11HeartbeatResponse\x12D\n" +
 	"\x10lease_expires_at\x18\x01 \x01(\v2\x1a.google.protobuf.TimestampR\x0eleaseExpiresAt\x12\x1c\n" +
-	"\tcancelled\x18\x02 \x01(\bR\tcancelled\"\xaf\x01\n" +
+	"\tcancelled\x18\x02 \x01(\bR\tcancelled\"\xd9\x01\n" +
 	"\x0fCompleteRequest\x12\x1e\n" +
 	"\vtask_run_id\x18\x01 \x01(\tR\ttaskRunId\x12\x1b\n" +
 	"\tworker_id\x18\x02 \x01(\tR\bworkerId\x12/\n" +
 	"\x06output\x18\x03 \x01(\v2\x17.google.protobuf.StructR\x06output\x12.\n" +
-	"\x13output_artifact_uri\x18\x04 \x01(\tR\x11outputArtifactUri\"@\n" +
+	"\x13output_artifact_uri\x18\x04 \x01(\tR\x11outputArtifactUri\x12(\n" +
+	"\x10log_artifact_uri\x18\x05 \x01(\tR\x0elogArtifactUri\"@\n" +
 	"\x10CompleteResponse\x12,\n" +
 	"\x04task\x18\x01 \x01(\v2\x18.runmesh.v1.TaskSnapshotR\x04task\"\xc7\x01\n" +
 	"\vFailRequest\x12\x1e\n" +
@@ -697,7 +1090,7 @@ const file_runmesh_v1_worker_proto_rawDesc = "" +
 	"\rerror_message\x18\x05 \x01(\tR\ferrorMessage\x12\x19\n" +
 	"\btrace_id\x18\x06 \x01(\tR\atraceId\"<\n" +
 	"\fFailResponse\x12,\n" +
-	"\x04task\x18\x01 \x01(\v2\x18.runmesh.v1.TaskSnapshotR\x04task\"\x85\x02\n" +
+	"\x04task\x18\x01 \x01(\v2\x18.runmesh.v1.TaskSnapshotR\x04task\"\xb3\x02\n" +
 	"\fTaskSnapshot\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\tR\x02id\x12&\n" +
 	"\x0fworkflow_run_id\x18\x02 \x01(\tR\rworkflowRunId\x12\x19\n" +
@@ -706,13 +1099,52 @@ const file_runmesh_v1_worker_proto_rawDesc = "" +
 	"\x05input\x18\x05 \x01(\v2\x17.google.protobuf.StructR\x05input\x12\x18\n" +
 	"\aattempt\x18\x06 \x01(\x05R\aattempt\x12'\n" +
 	"\x0ftimeout_seconds\x18\a \x01(\x05R\x0etimeoutSeconds\x12\x16\n" +
-	"\x06status\x18\b \x01(\tR\x06status2\xd7\x02\n" +
+	"\x06status\x18\b \x01(\tR\x06status\x12,\n" +
+	"\x12input_artifact_uri\x18\t \x01(\tR\x10inputArtifactUri\"\xd9\x01\n" +
+	"\x1bCreateArtifactUploadRequest\x12\x1e\n" +
+	"\vtask_run_id\x18\x01 \x01(\tR\ttaskRunId\x12\x1b\n" +
+	"\tworker_id\x18\x02 \x01(\tR\bworkerId\x12\x12\n" +
+	"\x04kind\x18\x03 \x01(\tR\x04kind\x12!\n" +
+	"\fcontent_type\x18\x04 \x01(\tR\vcontentType\x12\x1d\n" +
+	"\n" +
+	"size_bytes\x18\x05 \x01(\x03R\tsizeBytes\x12'\n" +
+	"\x0fchecksum_sha256\x18\x06 \x01(\tR\x0echecksumSha256\"\xc9\x02\n" +
+	"\x1cCreateArtifactUploadResponse\x12\x1f\n" +
+	"\vartifact_id\x18\x01 \x01(\tR\n" +
+	"artifactId\x12!\n" +
+	"\fartifact_uri\x18\x02 \x01(\tR\vartifactUri\x12\x1d\n" +
+	"\n" +
+	"upload_url\x18\x03 \x01(\tR\tuploadUrl\x12O\n" +
+	"\aheaders\x18\x04 \x03(\v25.runmesh.v1.CreateArtifactUploadResponse.HeadersEntryR\aheaders\x129\n" +
+	"\n" +
+	"expires_at\x18\x05 \x01(\v2\x1a.google.protobuf.TimestampR\texpiresAt\x1a:\n" +
+	"\fHeadersEntry\x12\x10\n" +
+	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
+	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"}\n" +
+	"\x1dCompleteArtifactUploadRequest\x12\x1f\n" +
+	"\vartifact_id\x18\x01 \x01(\tR\n" +
+	"artifactId\x12\x1b\n" +
+	"\tworker_id\x18\x02 \x01(\tR\bworkerId\x12\x1e\n" +
+	"\vtask_run_id\x18\x03 \x01(\tR\ttaskRunId\"C\n" +
+	"\x1eCompleteArtifactUploadResponse\x12!\n" +
+	"\fartifact_uri\x18\x01 \x01(\tR\vartifactUri\"|\n" +
+	"\x1aGetArtifactDownloadRequest\x12!\n" +
+	"\fartifact_uri\x18\x01 \x01(\tR\vartifactUri\x12\x1b\n" +
+	"\tworker_id\x18\x02 \x01(\tR\bworkerId\x12\x1e\n" +
+	"\vtask_run_id\x18\x03 \x01(\tR\ttaskRunId\"{\n" +
+	"\x1bGetArtifactDownloadResponse\x12!\n" +
+	"\fdownload_url\x18\x01 \x01(\tR\vdownloadUrl\x129\n" +
+	"\n" +
+	"expires_at\x18\x02 \x01(\v2\x1a.google.protobuf.TimestampR\texpiresAt2\x9b\x05\n" +
 	"\rWorkerService\x12<\n" +
 	"\x05Lease\x12\x18.runmesh.v1.LeaseRequest\x1a\x19.runmesh.v1.LeaseResponse\x12<\n" +
 	"\x05Start\x12\x18.runmesh.v1.StartRequest\x1a\x19.runmesh.v1.StartResponse\x12H\n" +
 	"\tHeartbeat\x12\x1c.runmesh.v1.HeartbeatRequest\x1a\x1d.runmesh.v1.HeartbeatResponse\x12E\n" +
 	"\bComplete\x12\x1b.runmesh.v1.CompleteRequest\x1a\x1c.runmesh.v1.CompleteResponse\x129\n" +
-	"\x04Fail\x12\x17.runmesh.v1.FailRequest\x1a\x18.runmesh.v1.FailResponseB5Z3github.com/runmesh/runmesh/gen/runmesh/v1;runmeshv1b\x06proto3"
+	"\x04Fail\x12\x17.runmesh.v1.FailRequest\x1a\x18.runmesh.v1.FailResponse\x12i\n" +
+	"\x14CreateArtifactUpload\x12'.runmesh.v1.CreateArtifactUploadRequest\x1a(.runmesh.v1.CreateArtifactUploadResponse\x12o\n" +
+	"\x16CompleteArtifactUpload\x12).runmesh.v1.CompleteArtifactUploadRequest\x1a*.runmesh.v1.CompleteArtifactUploadResponse\x12f\n" +
+	"\x13GetArtifactDownload\x12&.runmesh.v1.GetArtifactDownloadRequest\x1a'.runmesh.v1.GetArtifactDownloadResponseB5Z3github.com/runmesh/runmesh/gen/runmesh/v1;runmeshv1b\x06proto3"
 
 var (
 	file_runmesh_v1_worker_proto_rawDescOnce sync.Once
@@ -726,45 +1158,61 @@ func file_runmesh_v1_worker_proto_rawDescGZIP() []byte {
 	return file_runmesh_v1_worker_proto_rawDescData
 }
 
-var file_runmesh_v1_worker_proto_msgTypes = make([]protoimpl.MessageInfo, 11)
+var file_runmesh_v1_worker_proto_msgTypes = make([]protoimpl.MessageInfo, 18)
 var file_runmesh_v1_worker_proto_goTypes = []any{
-	(*LeaseRequest)(nil),          // 0: runmesh.v1.LeaseRequest
-	(*LeaseResponse)(nil),         // 1: runmesh.v1.LeaseResponse
-	(*StartRequest)(nil),          // 2: runmesh.v1.StartRequest
-	(*StartResponse)(nil),         // 3: runmesh.v1.StartResponse
-	(*HeartbeatRequest)(nil),      // 4: runmesh.v1.HeartbeatRequest
-	(*HeartbeatResponse)(nil),     // 5: runmesh.v1.HeartbeatResponse
-	(*CompleteRequest)(nil),       // 6: runmesh.v1.CompleteRequest
-	(*CompleteResponse)(nil),      // 7: runmesh.v1.CompleteResponse
-	(*FailRequest)(nil),           // 8: runmesh.v1.FailRequest
-	(*FailResponse)(nil),          // 9: runmesh.v1.FailResponse
-	(*TaskSnapshot)(nil),          // 10: runmesh.v1.TaskSnapshot
-	(*timestamppb.Timestamp)(nil), // 11: google.protobuf.Timestamp
-	(*structpb.Struct)(nil),       // 12: google.protobuf.Struct
+	(*LeaseRequest)(nil),                   // 0: runmesh.v1.LeaseRequest
+	(*LeaseResponse)(nil),                  // 1: runmesh.v1.LeaseResponse
+	(*StartRequest)(nil),                   // 2: runmesh.v1.StartRequest
+	(*StartResponse)(nil),                  // 3: runmesh.v1.StartResponse
+	(*HeartbeatRequest)(nil),               // 4: runmesh.v1.HeartbeatRequest
+	(*HeartbeatResponse)(nil),              // 5: runmesh.v1.HeartbeatResponse
+	(*CompleteRequest)(nil),                // 6: runmesh.v1.CompleteRequest
+	(*CompleteResponse)(nil),               // 7: runmesh.v1.CompleteResponse
+	(*FailRequest)(nil),                    // 8: runmesh.v1.FailRequest
+	(*FailResponse)(nil),                   // 9: runmesh.v1.FailResponse
+	(*TaskSnapshot)(nil),                   // 10: runmesh.v1.TaskSnapshot
+	(*CreateArtifactUploadRequest)(nil),    // 11: runmesh.v1.CreateArtifactUploadRequest
+	(*CreateArtifactUploadResponse)(nil),   // 12: runmesh.v1.CreateArtifactUploadResponse
+	(*CompleteArtifactUploadRequest)(nil),  // 13: runmesh.v1.CompleteArtifactUploadRequest
+	(*CompleteArtifactUploadResponse)(nil), // 14: runmesh.v1.CompleteArtifactUploadResponse
+	(*GetArtifactDownloadRequest)(nil),     // 15: runmesh.v1.GetArtifactDownloadRequest
+	(*GetArtifactDownloadResponse)(nil),    // 16: runmesh.v1.GetArtifactDownloadResponse
+	nil,                                    // 17: runmesh.v1.CreateArtifactUploadResponse.HeadersEntry
+	(*timestamppb.Timestamp)(nil),          // 18: google.protobuf.Timestamp
+	(*structpb.Struct)(nil),                // 19: google.protobuf.Struct
 }
 var file_runmesh_v1_worker_proto_depIdxs = []int32{
 	10, // 0: runmesh.v1.LeaseResponse.task:type_name -> runmesh.v1.TaskSnapshot
 	10, // 1: runmesh.v1.StartResponse.task:type_name -> runmesh.v1.TaskSnapshot
-	11, // 2: runmesh.v1.HeartbeatResponse.lease_expires_at:type_name -> google.protobuf.Timestamp
-	12, // 3: runmesh.v1.CompleteRequest.output:type_name -> google.protobuf.Struct
+	18, // 2: runmesh.v1.HeartbeatResponse.lease_expires_at:type_name -> google.protobuf.Timestamp
+	19, // 3: runmesh.v1.CompleteRequest.output:type_name -> google.protobuf.Struct
 	10, // 4: runmesh.v1.CompleteResponse.task:type_name -> runmesh.v1.TaskSnapshot
 	10, // 5: runmesh.v1.FailResponse.task:type_name -> runmesh.v1.TaskSnapshot
-	12, // 6: runmesh.v1.TaskSnapshot.input:type_name -> google.protobuf.Struct
-	0,  // 7: runmesh.v1.WorkerService.Lease:input_type -> runmesh.v1.LeaseRequest
-	2,  // 8: runmesh.v1.WorkerService.Start:input_type -> runmesh.v1.StartRequest
-	4,  // 9: runmesh.v1.WorkerService.Heartbeat:input_type -> runmesh.v1.HeartbeatRequest
-	6,  // 10: runmesh.v1.WorkerService.Complete:input_type -> runmesh.v1.CompleteRequest
-	8,  // 11: runmesh.v1.WorkerService.Fail:input_type -> runmesh.v1.FailRequest
-	1,  // 12: runmesh.v1.WorkerService.Lease:output_type -> runmesh.v1.LeaseResponse
-	3,  // 13: runmesh.v1.WorkerService.Start:output_type -> runmesh.v1.StartResponse
-	5,  // 14: runmesh.v1.WorkerService.Heartbeat:output_type -> runmesh.v1.HeartbeatResponse
-	7,  // 15: runmesh.v1.WorkerService.Complete:output_type -> runmesh.v1.CompleteResponse
-	9,  // 16: runmesh.v1.WorkerService.Fail:output_type -> runmesh.v1.FailResponse
-	12, // [12:17] is the sub-list for method output_type
-	7,  // [7:12] is the sub-list for method input_type
-	7,  // [7:7] is the sub-list for extension type_name
-	7,  // [7:7] is the sub-list for extension extendee
-	0,  // [0:7] is the sub-list for field type_name
+	19, // 6: runmesh.v1.TaskSnapshot.input:type_name -> google.protobuf.Struct
+	17, // 7: runmesh.v1.CreateArtifactUploadResponse.headers:type_name -> runmesh.v1.CreateArtifactUploadResponse.HeadersEntry
+	18, // 8: runmesh.v1.CreateArtifactUploadResponse.expires_at:type_name -> google.protobuf.Timestamp
+	18, // 9: runmesh.v1.GetArtifactDownloadResponse.expires_at:type_name -> google.protobuf.Timestamp
+	0,  // 10: runmesh.v1.WorkerService.Lease:input_type -> runmesh.v1.LeaseRequest
+	2,  // 11: runmesh.v1.WorkerService.Start:input_type -> runmesh.v1.StartRequest
+	4,  // 12: runmesh.v1.WorkerService.Heartbeat:input_type -> runmesh.v1.HeartbeatRequest
+	6,  // 13: runmesh.v1.WorkerService.Complete:input_type -> runmesh.v1.CompleteRequest
+	8,  // 14: runmesh.v1.WorkerService.Fail:input_type -> runmesh.v1.FailRequest
+	11, // 15: runmesh.v1.WorkerService.CreateArtifactUpload:input_type -> runmesh.v1.CreateArtifactUploadRequest
+	13, // 16: runmesh.v1.WorkerService.CompleteArtifactUpload:input_type -> runmesh.v1.CompleteArtifactUploadRequest
+	15, // 17: runmesh.v1.WorkerService.GetArtifactDownload:input_type -> runmesh.v1.GetArtifactDownloadRequest
+	1,  // 18: runmesh.v1.WorkerService.Lease:output_type -> runmesh.v1.LeaseResponse
+	3,  // 19: runmesh.v1.WorkerService.Start:output_type -> runmesh.v1.StartResponse
+	5,  // 20: runmesh.v1.WorkerService.Heartbeat:output_type -> runmesh.v1.HeartbeatResponse
+	7,  // 21: runmesh.v1.WorkerService.Complete:output_type -> runmesh.v1.CompleteResponse
+	9,  // 22: runmesh.v1.WorkerService.Fail:output_type -> runmesh.v1.FailResponse
+	12, // 23: runmesh.v1.WorkerService.CreateArtifactUpload:output_type -> runmesh.v1.CreateArtifactUploadResponse
+	14, // 24: runmesh.v1.WorkerService.CompleteArtifactUpload:output_type -> runmesh.v1.CompleteArtifactUploadResponse
+	16, // 25: runmesh.v1.WorkerService.GetArtifactDownload:output_type -> runmesh.v1.GetArtifactDownloadResponse
+	18, // [18:26] is the sub-list for method output_type
+	10, // [10:18] is the sub-list for method input_type
+	10, // [10:10] is the sub-list for extension type_name
+	10, // [10:10] is the sub-list for extension extendee
+	0,  // [0:10] is the sub-list for field type_name
 }
 
 func init() { file_runmesh_v1_worker_proto_init() }
@@ -778,7 +1226,7 @@ func file_runmesh_v1_worker_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_runmesh_v1_worker_proto_rawDesc), len(file_runmesh_v1_worker_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   11,
+			NumMessages:   18,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

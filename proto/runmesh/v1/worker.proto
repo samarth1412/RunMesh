@@ -12,6 +12,9 @@ service WorkerService {
   rpc Heartbeat(HeartbeatRequest) returns (HeartbeatResponse);
   rpc Complete(CompleteRequest) returns (CompleteResponse);
   rpc Fail(FailRequest) returns (FailResponse);
+  rpc CreateArtifactUpload(CreateArtifactUploadRequest) returns (CreateArtifactUploadResponse);
+  rpc CompleteArtifactUpload(CompleteArtifactUploadRequest) returns (CompleteArtifactUploadResponse);
+  rpc GetArtifactDownload(GetArtifactDownloadRequest) returns (GetArtifactDownloadResponse);
 }
 
 message LeaseRequest { string task_run_id = 1; string worker_id = 2; }
@@ -25,6 +28,7 @@ message CompleteRequest {
   string worker_id = 2;
   google.protobuf.Struct output = 3;
   string output_artifact_uri = 4;
+  string log_artifact_uri = 5;
 }
 message CompleteResponse { TaskSnapshot task = 1; }
 message FailRequest {
@@ -45,4 +49,28 @@ message TaskSnapshot {
   int32 attempt = 6;
   int32 timeout_seconds = 7;
   string status = 8;
+  string input_artifact_uri = 9;
+}
+
+message CreateArtifactUploadRequest {
+  string task_run_id = 1;
+  string worker_id = 2;
+  string kind = 3;
+  string content_type = 4;
+  int64 size_bytes = 5;
+  string checksum_sha256 = 6;
+}
+message CreateArtifactUploadResponse {
+  string artifact_id = 1;
+  string artifact_uri = 2;
+  string upload_url = 3;
+  map<string, string> headers = 4;
+  google.protobuf.Timestamp expires_at = 5;
+}
+message CompleteArtifactUploadRequest { string artifact_id = 1; string worker_id = 2; string task_run_id = 3; }
+message CompleteArtifactUploadResponse { string artifact_uri = 1; }
+message GetArtifactDownloadRequest { string artifact_uri = 1; string worker_id = 2; string task_run_id = 3; }
+message GetArtifactDownloadResponse {
+  string download_url = 1;
+  google.protobuf.Timestamp expires_at = 2;
 }

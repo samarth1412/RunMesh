@@ -18,6 +18,8 @@ Then open:
 
 Requests are scoped to the authenticated tenant. Production configuration rejects development auth and requires a verified OIDC token or scoped API key.
 
+Large inputs, outputs, and structured task logs use tenant-owned S3/MinIO artifacts with short-lived presigned transfers; see [artifact handling](docs/artifacts.md).
+
 The dashboard signs in through the bundled Keycloak realm. Use `admin` / `runmesh`. The control plane verifies the resulting JWT and resolves tenant membership and role from PostgreSQL.
 
 ## Quick start
