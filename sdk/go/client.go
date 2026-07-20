@@ -3,6 +3,7 @@ package runmesh
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -19,15 +20,16 @@ import (
 )
 
 type Task struct {
-	ID              string          `json:"id"`
-	WorkflowRunID   string          `json:"workflow_run_id"`
-	TaskKey         string          `json:"task_key"`
-	Handler         string          `json:"handler"`
-	Status          string          `json:"status"`
-	AttemptCount    int             `json:"attempt_count"`
-	MaximumAttempts int             `json:"maximum_attempts"`
-	TimeoutSeconds  int             `json:"timeout_seconds"`
-	Input           json.RawMessage `json:"input"`
+	ID               string          `json:"id"`
+	WorkflowRunID    string          `json:"workflow_run_id"`
+	TaskKey          string          `json:"task_key"`
+	Handler          string          `json:"handler"`
+	Status           string          `json:"status"`
+	AttemptCount     int             `json:"attempt_count"`
+	MaximumAttempts  int             `json:"maximum_attempts"`
+	TimeoutSeconds   int             `json:"timeout_seconds"`
+	Input            json.RawMessage `json:"input"`
+	InputArtifactURI string          `json:"input_artifact_uri,omitempty"`
 }
 type Heartbeat struct {
 	LeaseExpiresAt time.Time `json:"lease_expires_at"`
@@ -71,7 +73,14 @@ func (c *Client) Lease(ctx context.Context, id string) (Task, error) {
 	if err != nil {
 		return Task{}, err
 	}
-	return task(response.Task), nil
+	result := task(response.Task)
+	if result.InputArtifactURI != "" {
+		result.Input, err = c.DownloadArtifact(ctx, id, result.InputArtifactURI)
+		if err != nil {
+			return Task{}, fmt.Errorf("download input artifact: %w", err)
+		}
+	}
+	return result, nil
 }
 func (c *Client) Start(ctx context.Context, id string) (Task, error) {
 	if c.initErr != nil {
@@ -105,15 +114,74 @@ func (c *Client) Complete(ctx context.Context, id string, output any) (Task, err
 	if err = json.Unmarshal(raw, &object); err != nil {
 		return Task{}, err
 	}
+	artifactURI := ""
+	if int64(len(raw)) > 256<<10 {
+		artifactURI, err = c.UploadArtifact(ctx, id, "output", "application/json", raw)
+		if err != nil {
+			return Task{}, fmt.Errorf("upload output artifact: %w", err)
+		}
+		object = map[string]any{}
+	}
 	structured, err := structpb.NewStruct(object)
 	if err != nil {
 		return Task{}, err
 	}
-	response, err := c.worker.Complete(c.rpcContext(ctx), &runmeshv1.CompleteRequest{TaskRunId: id, WorkerId: c.workerID, Output: structured})
+	response, err := c.worker.Complete(c.rpcContext(ctx), &runmeshv1.CompleteRequest{TaskRunId: id, WorkerId: c.workerID, Output: structured, OutputArtifactUri: artifactURI})
 	if err != nil {
 		return Task{}, err
 	}
 	return task(response.Task), nil
+}
+
+func (c *Client) UploadArtifact(ctx context.Context, taskID, kind, contentType string, data []byte) (string, error) {
+	checksum := fmt.Sprintf("%x", sha256.Sum256(data))
+	response, err := c.worker.CreateArtifactUpload(c.rpcContext(ctx), &runmeshv1.CreateArtifactUploadRequest{TaskRunId: taskID, WorkerId: c.workerID, Kind: kind, ContentType: contentType, SizeBytes: int64(len(data)), ChecksumSha256: checksum})
+	if err != nil {
+		return "", err
+	}
+	request, err := http.NewRequestWithContext(ctx, http.MethodPut, response.UploadUrl, bytes.NewReader(data))
+	if err != nil {
+		return "", err
+	}
+	for key, value := range response.Headers {
+		if !strings.EqualFold(key, "host") {
+			request.Header.Set(key, value)
+		}
+	}
+	putResponse, err := c.http.Do(request)
+	if err != nil {
+		return "", err
+	}
+	defer putResponse.Body.Close()
+	if putResponse.StatusCode < 200 || putResponse.StatusCode >= 300 {
+		raw, _ := io.ReadAll(io.LimitReader(putResponse.Body, 4096))
+		return "", fmt.Errorf("artifact upload returned %s: %s", putResponse.Status, raw)
+	}
+	completed, err := c.worker.CompleteArtifactUpload(c.rpcContext(ctx), &runmeshv1.CompleteArtifactUploadRequest{ArtifactId: response.ArtifactId, WorkerId: c.workerID, TaskRunId: taskID})
+	if err != nil {
+		return "", err
+	}
+	return completed.ArtifactUri, nil
+}
+
+func (c *Client) DownloadArtifact(ctx context.Context, taskID, artifactURI string) ([]byte, error) {
+	response, err := c.worker.GetArtifactDownload(c.rpcContext(ctx), &runmeshv1.GetArtifactDownloadRequest{ArtifactUri: artifactURI, WorkerId: c.workerID, TaskRunId: taskID})
+	if err != nil {
+		return nil, err
+	}
+	request, err := http.NewRequestWithContext(ctx, http.MethodGet, response.DownloadUrl, nil)
+	if err != nil {
+		return nil, err
+	}
+	download, err := c.http.Do(request)
+	if err != nil {
+		return nil, err
+	}
+	defer download.Body.Close()
+	if download.StatusCode < 200 || download.StatusCode >= 300 {
+		return nil, fmt.Errorf("artifact download returned %s", download.Status)
+	}
+	return io.ReadAll(io.LimitReader(download.Body, (100<<20)+1))
 }
 func (c *Client) Fail(ctx context.Context, id string, retryable bool, errValue error) (Task, error) {
 	if c.initErr != nil {
@@ -129,7 +197,6 @@ func (c *Client) Report(ctx context.Context, handlers []string, active int) erro
 	return c.postHTTP(ctx, "/internal/v1/workers/"+c.workerID+"/heartbeat", map[string]any{"handlers": handlers, "active_tasks": active, "metadata": map[string]string{"sdk": "go"}})
 }
 func (c *Client) postHTTP(ctx context.Context, path string, payload map[string]any) error {
-	payload["worker_id"] = c.workerID
 	body, err := json.Marshal(payload)
 	if err != nil {
 		return err
@@ -153,5 +220,5 @@ func (c *Client) postHTTP(ctx context.Context, path string, payload map[string]a
 }
 func task(value *runmeshv1.TaskSnapshot) Task {
 	input, _ := json.Marshal(value.Input.AsMap())
-	return Task{ID: value.Id, WorkflowRunID: value.WorkflowRunId, TaskKey: value.TaskKey, Handler: value.Handler, Status: value.Status, AttemptCount: int(value.Attempt), TimeoutSeconds: int(value.TimeoutSeconds), Input: input}
+	return Task{ID: value.Id, WorkflowRunID: value.WorkflowRunId, TaskKey: value.TaskKey, Handler: value.Handler, Status: value.Status, AttemptCount: int(value.Attempt), TimeoutSeconds: int(value.TimeoutSeconds), Input: input, InputArtifactURI: value.InputArtifactUri}
 }

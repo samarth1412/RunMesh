@@ -54,12 +54,32 @@ def test_context_idempotency_and_cancellation() -> None:
         context.raise_if_cancelled()
 
 
+async def test_context_upload_artifact_encodes_json() -> None:
+    recorded: tuple[str, str, bytes] | None = None
+
+    async def upload(kind: str, content_type: str, data: bytes) -> str:
+        nonlocal recorded
+        recorded = (kind, content_type, data)
+        return "s3://runmesh/output/example"
+
+    context = TaskContext("task-1", "run-1", 1, 30, _artifact_uploader=upload)
+    uri = await context.upload_artifact({"ok": True})
+
+    assert uri == "s3://runmesh/output/example"
+    assert recorded == ("output", "application/json", b'{"ok":true}')
+
+
 def test_protobuf_task_contract() -> None:
     task_input = Struct()
     task_input.update({"pages": 14})
     task = worker_pb2.TaskSnapshot(
-        id="task", workflow_run_id="run", handler="documents.extract",
-        input=task_input, attempt=2, timeout_seconds=30, status="LEASED",
+        id="task",
+        workflow_run_id="run",
+        handler="documents.extract",
+        input=task_input,
+        attempt=2,
+        timeout_seconds=30,
+        status="LEASED",
     )
     decoded = _task_message(task)
     assert decoded["attempt_count"] == 2

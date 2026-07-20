@@ -26,7 +26,7 @@ from google.protobuf import struct_pb2 as google_dot_protobuf_dot_struct__pb2
 from google.protobuf import timestamp_pb2 as google_dot_protobuf_dot_timestamp__pb2
 
 
-DESCRIPTOR = _descriptor_pool.Default().AddSerializedFile(b'\n\x17runmesh/v1/worker.proto\x12\nrunmesh.v1\x1a\x1cgoogle/protobuf/struct.proto\x1a\x1fgoogle/protobuf/timestamp.proto\"K\n\x0cLeaseRequest\x12\x1e\n\x0btask_run_id\x18\x01 \x01(\tR\ttaskRunId\x12\x1b\n\tworker_id\x18\x02 \x01(\tR\x08workerId\"=\n\rLeaseResponse\x12,\n\x04task\x18\x01 \x01(\x0b\x32\x18.runmesh.v1.TaskSnapshotR\x04task\"K\n\x0cStartRequest\x12\x1e\n\x0btask_run_id\x18\x01 \x01(\tR\ttaskRunId\x12\x1b\n\tworker_id\x18\x02 \x01(\tR\x08workerId\"=\n\rStartResponse\x12,\n\x04task\x18\x01 \x01(\x0b\x32\x18.runmesh.v1.TaskSnapshotR\x04task\"O\n\x10HeartbeatRequest\x12\x1e\n\x0btask_run_id\x18\x01 \x01(\tR\ttaskRunId\x12\x1b\n\tworker_id\x18\x02 \x01(\tR\x08workerId\"w\n\x11HeartbeatResponse\x12\x44\n\x10lease_expires_at\x18\x01 \x01(\x0b\x32\x1a.google.protobuf.TimestampR\x0eleaseExpiresAt\x12\x1c\n\tcancelled\x18\x02 \x01(\x08R\tcancelled\"\xaf\x01\n\x0f\x43ompleteRequest\x12\x1e\n\x0btask_run_id\x18\x01 \x01(\tR\ttaskRunId\x12\x1b\n\tworker_id\x18\x02 \x01(\tR\x08workerId\x12/\n\x06output\x18\x03 \x01(\x0b\x32\x17.google.protobuf.StructR\x06output\x12.\n\x13output_artifact_uri\x18\x04 \x01(\tR\x11outputArtifactUri\"@\n\x10\x43ompleteResponse\x12,\n\x04task\x18\x01 \x01(\x0b\x32\x18.runmesh.v1.TaskSnapshotR\x04task\"\xc7\x01\n\x0b\x46\x61ilRequest\x12\x1e\n\x0btask_run_id\x18\x01 \x01(\tR\ttaskRunId\x12\x1b\n\tworker_id\x18\x02 \x01(\tR\x08workerId\x12\x1c\n\tretryable\x18\x03 \x01(\x08R\tretryable\x12\x1d\n\nerror_type\x18\x04 \x01(\tR\terrorType\x12#\n\rerror_message\x18\x05 \x01(\tR\x0c\x65rrorMessage\x12\x19\n\x08trace_id\x18\x06 \x01(\tR\x07traceId\"<\n\x0c\x46\x61ilResponse\x12,\n\x04task\x18\x01 \x01(\x0b\x32\x18.runmesh.v1.TaskSnapshotR\x04task\"\x85\x02\n\x0cTaskSnapshot\x12\x0e\n\x02id\x18\x01 \x01(\tR\x02id\x12&\n\x0fworkflow_run_id\x18\x02 \x01(\tR\rworkflowRunId\x12\x19\n\x08task_key\x18\x03 \x01(\tR\x07taskKey\x12\x18\n\x07handler\x18\x04 \x01(\tR\x07handler\x12-\n\x05input\x18\x05 \x01(\x0b\x32\x17.google.protobuf.StructR\x05input\x12\x18\n\x07\x61ttempt\x18\x06 \x01(\x05R\x07\x61ttempt\x12\'\n\x0ftimeout_seconds\x18\x07 \x01(\x05R\x0etimeoutSeconds\x12\x16\n\x06status\x18\x08 \x01(\tR\x06status2\xd7\x02\n\rWorkerService\x12<\n\x05Lease\x12\x18.runmesh.v1.LeaseRequest\x1a\x19.runmesh.v1.LeaseResponse\x12<\n\x05Start\x12\x18.runmesh.v1.StartRequest\x1a\x19.runmesh.v1.StartResponse\x12H\n\tHeartbeat\x12\x1c.runmesh.v1.HeartbeatRequest\x1a\x1d.runmesh.v1.HeartbeatResponse\x12\x45\n\x08\x43omplete\x12\x1b.runmesh.v1.CompleteRequest\x1a\x1c.runmesh.v1.CompleteResponse\x12\x39\n\x04\x46\x61il\x12\x17.runmesh.v1.FailRequest\x1a\x18.runmesh.v1.FailResponseB5Z3github.com/runmesh/runmesh/gen/runmesh/v1;runmeshv1b\x06proto3')
+DESCRIPTOR = _descriptor_pool.Default().AddSerializedFile(b'\n\x17runmesh/v1/worker.proto\x12\nrunmesh.v1\x1a\x1cgoogle/protobuf/struct.proto\x1a\x1fgoogle/protobuf/timestamp.proto\"K\n\x0cLeaseRequest\x12\x1e\n\x0btask_run_id\x18\x01 \x01(\tR\ttaskRunId\x12\x1b\n\tworker_id\x18\x02 \x01(\tR\x08workerId\"=\n\rLeaseResponse\x12,\n\x04task\x18\x01 \x01(\x0b\x32\x18.runmesh.v1.TaskSnapshotR\x04task\"K\n\x0cStartRequest\x12\x1e\n\x0btask_run_id\x18\x01 \x01(\tR\ttaskRunId\x12\x1b\n\tworker_id\x18\x02 \x01(\tR\x08workerId\"=\n\rStartResponse\x12,\n\x04task\x18\x01 \x01(\x0b\x32\x18.runmesh.v1.TaskSnapshotR\x04task\"O\n\x10HeartbeatRequest\x12\x1e\n\x0btask_run_id\x18\x01 \x01(\tR\ttaskRunId\x12\x1b\n\tworker_id\x18\x02 \x01(\tR\x08workerId\"w\n\x11HeartbeatResponse\x12\x44\n\x10lease_expires_at\x18\x01 \x01(\x0b\x32\x1a.google.protobuf.TimestampR\x0eleaseExpiresAt\x12\x1c\n\tcancelled\x18\x02 \x01(\x08R\tcancelled\"\xd9\x01\n\x0f\x43ompleteRequest\x12\x1e\n\x0btask_run_id\x18\x01 \x01(\tR\ttaskRunId\x12\x1b\n\tworker_id\x18\x02 \x01(\tR\x08workerId\x12/\n\x06output\x18\x03 \x01(\x0b\x32\x17.google.protobuf.StructR\x06output\x12.\n\x13output_artifact_uri\x18\x04 \x01(\tR\x11outputArtifactUri\x12(\n\x10log_artifact_uri\x18\x05 \x01(\tR\x0elogArtifactUri\"@\n\x10\x43ompleteResponse\x12,\n\x04task\x18\x01 \x01(\x0b\x32\x18.runmesh.v1.TaskSnapshotR\x04task\"\xc7\x01\n\x0b\x46\x61ilRequest\x12\x1e\n\x0btask_run_id\x18\x01 \x01(\tR\ttaskRunId\x12\x1b\n\tworker_id\x18\x02 \x01(\tR\x08workerId\x12\x1c\n\tretryable\x18\x03 \x01(\x08R\tretryable\x12\x1d\n\nerror_type\x18\x04 \x01(\tR\terrorType\x12#\n\rerror_message\x18\x05 \x01(\tR\x0c\x65rrorMessage\x12\x19\n\x08trace_id\x18\x06 \x01(\tR\x07traceId\"<\n\x0c\x46\x61ilResponse\x12,\n\x04task\x18\x01 \x01(\x0b\x32\x18.runmesh.v1.TaskSnapshotR\x04task\"\xb3\x02\n\x0cTaskSnapshot\x12\x0e\n\x02id\x18\x01 \x01(\tR\x02id\x12&\n\x0fworkflow_run_id\x18\x02 \x01(\tR\rworkflowRunId\x12\x19\n\x08task_key\x18\x03 \x01(\tR\x07taskKey\x12\x18\n\x07handler\x18\x04 \x01(\tR\x07handler\x12-\n\x05input\x18\x05 \x01(\x0b\x32\x17.google.protobuf.StructR\x05input\x12\x18\n\x07\x61ttempt\x18\x06 \x01(\x05R\x07\x61ttempt\x12\'\n\x0ftimeout_seconds\x18\x07 \x01(\x05R\x0etimeoutSeconds\x12\x16\n\x06status\x18\x08 \x01(\tR\x06status\x12,\n\x12input_artifact_uri\x18\t \x01(\tR\x10inputArtifactUri\"\xd9\x01\n\x1b\x43reateArtifactUploadRequest\x12\x1e\n\x0btask_run_id\x18\x01 \x01(\tR\ttaskRunId\x12\x1b\n\tworker_id\x18\x02 \x01(\tR\x08workerId\x12\x12\n\x04kind\x18\x03 \x01(\tR\x04kind\x12!\n\x0c\x63ontent_type\x18\x04 \x01(\tR\x0b\x63ontentType\x12\x1d\n\nsize_bytes\x18\x05 \x01(\x03R\tsizeBytes\x12\'\n\x0f\x63hecksum_sha256\x18\x06 \x01(\tR\x0e\x63hecksumSha256\"\xc9\x02\n\x1c\x43reateArtifactUploadResponse\x12\x1f\n\x0b\x61rtifact_id\x18\x01 \x01(\tR\nartifactId\x12!\n\x0c\x61rtifact_uri\x18\x02 \x01(\tR\x0b\x61rtifactUri\x12\x1d\n\nupload_url\x18\x03 \x01(\tR\tuploadUrl\x12O\n\x07headers\x18\x04 \x03(\x0b\x32\x35.runmesh.v1.CreateArtifactUploadResponse.HeadersEntryR\x07headers\x12\x39\n\nexpires_at\x18\x05 \x01(\x0b\x32\x1a.google.protobuf.TimestampR\texpiresAt\x1a:\n\x0cHeadersEntry\x12\x10\n\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n\x05value\x18\x02 \x01(\tR\x05value:\x02\x38\x01\"}\n\x1d\x43ompleteArtifactUploadRequest\x12\x1f\n\x0b\x61rtifact_id\x18\x01 \x01(\tR\nartifactId\x12\x1b\n\tworker_id\x18\x02 \x01(\tR\x08workerId\x12\x1e\n\x0btask_run_id\x18\x03 \x01(\tR\ttaskRunId\"C\n\x1e\x43ompleteArtifactUploadResponse\x12!\n\x0c\x61rtifact_uri\x18\x01 \x01(\tR\x0b\x61rtifactUri\"|\n\x1aGetArtifactDownloadRequest\x12!\n\x0c\x61rtifact_uri\x18\x01 \x01(\tR\x0b\x61rtifactUri\x12\x1b\n\tworker_id\x18\x02 \x01(\tR\x08workerId\x12\x1e\n\x0btask_run_id\x18\x03 \x01(\tR\ttaskRunId\"{\n\x1bGetArtifactDownloadResponse\x12!\n\x0c\x64ownload_url\x18\x01 \x01(\tR\x0b\x64ownloadUrl\x12\x39\n\nexpires_at\x18\x02 \x01(\x0b\x32\x1a.google.protobuf.TimestampR\texpiresAt2\x9b\x05\n\rWorkerService\x12<\n\x05Lease\x12\x18.runmesh.v1.LeaseRequest\x1a\x19.runmesh.v1.LeaseResponse\x12<\n\x05Start\x12\x18.runmesh.v1.StartRequest\x1a\x19.runmesh.v1.StartResponse\x12H\n\tHeartbeat\x12\x1c.runmesh.v1.HeartbeatRequest\x1a\x1d.runmesh.v1.HeartbeatResponse\x12\x45\n\x08\x43omplete\x12\x1b.runmesh.v1.CompleteRequest\x1a\x1c.runmesh.v1.CompleteResponse\x12\x39\n\x04\x46\x61il\x12\x17.runmesh.v1.FailRequest\x1a\x18.runmesh.v1.FailResponse\x12i\n\x14\x43reateArtifactUpload\x12\'.runmesh.v1.CreateArtifactUploadRequest\x1a(.runmesh.v1.CreateArtifactUploadResponse\x12o\n\x16\x43ompleteArtifactUpload\x12).runmesh.v1.CompleteArtifactUploadRequest\x1a*.runmesh.v1.CompleteArtifactUploadResponse\x12\x66\n\x13GetArtifactDownload\x12&.runmesh.v1.GetArtifactDownloadRequest\x1a\'.runmesh.v1.GetArtifactDownloadResponseB5Z3github.com/runmesh/runmesh/gen/runmesh/v1;runmeshv1b\x06proto3')
 
 _globals = globals()
 _builder.BuildMessageAndEnumDescriptors(DESCRIPTOR, _globals)
@@ -34,6 +34,8 @@ _builder.BuildTopDescriptorsAndMessages(DESCRIPTOR, 'runmesh.v1.worker_pb2', _gl
 if not _descriptor._USE_C_DESCRIPTORS:
   _globals['DESCRIPTOR']._loaded_options = None
   _globals['DESCRIPTOR']._serialized_options = b'Z3github.com/runmesh/runmesh/gen/runmesh/v1;runmeshv1'
+  _globals['_CREATEARTIFACTUPLOADRESPONSE_HEADERSENTRY']._loaded_options = None
+  _globals['_CREATEARTIFACTUPLOADRESPONSE_HEADERSENTRY']._serialized_options = b'8\001'
   _globals['_LEASEREQUEST']._serialized_start=102
   _globals['_LEASEREQUEST']._serialized_end=177
   _globals['_LEASERESPONSE']._serialized_start=179
@@ -47,15 +49,29 @@ if not _descriptor._USE_C_DESCRIPTORS:
   _globals['_HEARTBEATRESPONSE']._serialized_start=463
   _globals['_HEARTBEATRESPONSE']._serialized_end=582
   _globals['_COMPLETEREQUEST']._serialized_start=585
-  _globals['_COMPLETEREQUEST']._serialized_end=760
-  _globals['_COMPLETERESPONSE']._serialized_start=762
-  _globals['_COMPLETERESPONSE']._serialized_end=826
-  _globals['_FAILREQUEST']._serialized_start=829
-  _globals['_FAILREQUEST']._serialized_end=1028
-  _globals['_FAILRESPONSE']._serialized_start=1030
-  _globals['_FAILRESPONSE']._serialized_end=1090
-  _globals['_TASKSNAPSHOT']._serialized_start=1093
-  _globals['_TASKSNAPSHOT']._serialized_end=1354
-  _globals['_WORKERSERVICE']._serialized_start=1357
-  _globals['_WORKERSERVICE']._serialized_end=1700
+  _globals['_COMPLETEREQUEST']._serialized_end=802
+  _globals['_COMPLETERESPONSE']._serialized_start=804
+  _globals['_COMPLETERESPONSE']._serialized_end=868
+  _globals['_FAILREQUEST']._serialized_start=871
+  _globals['_FAILREQUEST']._serialized_end=1070
+  _globals['_FAILRESPONSE']._serialized_start=1072
+  _globals['_FAILRESPONSE']._serialized_end=1132
+  _globals['_TASKSNAPSHOT']._serialized_start=1135
+  _globals['_TASKSNAPSHOT']._serialized_end=1442
+  _globals['_CREATEARTIFACTUPLOADREQUEST']._serialized_start=1445
+  _globals['_CREATEARTIFACTUPLOADREQUEST']._serialized_end=1662
+  _globals['_CREATEARTIFACTUPLOADRESPONSE']._serialized_start=1665
+  _globals['_CREATEARTIFACTUPLOADRESPONSE']._serialized_end=1994
+  _globals['_CREATEARTIFACTUPLOADRESPONSE_HEADERSENTRY']._serialized_start=1936
+  _globals['_CREATEARTIFACTUPLOADRESPONSE_HEADERSENTRY']._serialized_end=1994
+  _globals['_COMPLETEARTIFACTUPLOADREQUEST']._serialized_start=1996
+  _globals['_COMPLETEARTIFACTUPLOADREQUEST']._serialized_end=2121
+  _globals['_COMPLETEARTIFACTUPLOADRESPONSE']._serialized_start=2123
+  _globals['_COMPLETEARTIFACTUPLOADRESPONSE']._serialized_end=2190
+  _globals['_GETARTIFACTDOWNLOADREQUEST']._serialized_start=2192
+  _globals['_GETARTIFACTDOWNLOADREQUEST']._serialized_end=2316
+  _globals['_GETARTIFACTDOWNLOADRESPONSE']._serialized_start=2318
+  _globals['_GETARTIFACTDOWNLOADRESPONSE']._serialized_end=2441
+  _globals['_WORKERSERVICE']._serialized_start=2444
+  _globals['_WORKERSERVICE']._serialized_end=3111
 # @@protoc_insertion_point(module_scope)

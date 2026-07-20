@@ -3,7 +3,9 @@
 package integration
 
 import (
+	"bytes"
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -19,6 +21,7 @@ import (
 	toxiproxyclient "github.com/Shopify/toxiproxy/v2/client"
 	"github.com/jackc/pgx/v5"
 	"github.com/prometheus/client_golang/prometheus"
+	"github.com/runmesh/runmesh/internal/artifact"
 	"github.com/runmesh/runmesh/internal/auth"
 	"github.com/runmesh/runmesh/internal/messaging"
 	"github.com/runmesh/runmesh/internal/ratelimit"
@@ -31,6 +34,109 @@ import (
 	tctoxiproxy "github.com/testcontainers/testcontainers-go/modules/toxiproxy"
 	"github.com/testcontainers/testcontainers-go/wait"
 )
+
+func TestArtifactOwnershipPresigningAndSlowUploadRecovery(t *testing.T) {
+	ctx := context.Background()
+	store := postgresStore(t, ctx)
+	minio := start(t, ctx, testcontainers.ContainerRequest{
+		Image: "minio/minio:RELEASE.2025-02-07T23-21-09Z", ExposedPorts: []string{"9000/tcp"},
+		Env: map[string]string{"MINIO_ROOT_USER": "runmesh", "MINIO_ROOT_PASSWORD": "runmesh-development"},
+		Cmd: []string{"server", "/data"}, WaitingFor: wait.ForHTTP("/minio/health/ready").WithPort("9000/tcp").WithStartupTimeout(time.Minute),
+	})
+	minioIP, err := minio.ContainerIP(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	proxyContainer, err := tctoxiproxy.Run(ctx, "ghcr.io/shopify/toxiproxy:2.12.0", tctoxiproxy.WithProxy("minio", net.JoinHostPort(minioIP, "9000")))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = testcontainers.TerminateContainer(proxyContainer) })
+	host, port, err := proxyContainer.ProxiedEndpoint(8666)
+	if err != nil {
+		t.Fatal(err)
+	}
+	proxyURI, err := proxyContainer.URI(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	proxy, err := toxiproxyclient.NewClient(proxyURI).Proxy("minio")
+	if err != nil {
+		t.Fatal(err)
+	}
+	manager, err := artifact.New(ctx, store, artifact.Config{Endpoint: "http://" + net.JoinHostPort(host, port), Region: "us-east-1", Bucket: "runmesh-test", AccessKey: "runmesh", SecretKey: "runmesh-development", PathStyle: true, CreateBucket: true, PresignExpiry: 15 * time.Minute})
+	if err != nil {
+		t.Fatal(err)
+	}
+	payload := []byte(`{"source":"artifact"}`)
+	checksum := fmt.Sprintf("%x", sha256.Sum256(payload))
+	upload, err := manager.CreateUpload(ctx, "00000000-0000-0000-0000-000000000001", "00000000-0000-0000-0000-000000000001", "input", "application/json", int64(len(payload)), checksum, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = proxy.AddToxic("slow-upload", "latency", "upstream", 1, toxiproxyclient.Attributes{"latency": 500}); err != nil {
+		t.Fatal(err)
+	}
+	request, _ := http.NewRequestWithContext(ctx, http.MethodPut, upload.URL, bytes.NewReader(payload))
+	for key, value := range upload.Headers {
+		request.Header.Set(key, value)
+	}
+	response, putErr := (&http.Client{Timeout: 100 * time.Millisecond}).Do(request)
+	if response != nil {
+		response.Body.Close()
+	}
+	if putErr == nil {
+		t.Fatal("slow upload unexpectedly succeeded")
+	}
+	pending, err := store.GetArtifact(ctx, "00000000-0000-0000-0000-000000000001", upload.Artifact.ID)
+	if err != nil || pending.Status != "PENDING" {
+		t.Fatalf("pending artifact was not preserved: status=%s err=%v", pending.Status, err)
+	}
+	if err = proxy.RemoveToxic("slow-upload"); err != nil {
+		t.Fatal(err)
+	}
+	request, _ = http.NewRequestWithContext(ctx, http.MethodPut, upload.URL, bytes.NewReader(payload))
+	for key, value := range upload.Headers {
+		request.Header.Set(key, value)
+	}
+	response, err = http.DefaultClient.Do(request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	response.Body.Close()
+	if response.StatusCode/100 != 2 {
+		t.Fatalf("upload status=%s", response.Status)
+	}
+	ready, err := manager.Complete(ctx, "00000000-0000-0000-0000-000000000001", upload.Artifact.ID)
+	if err != nil || ready.Status != "READY" {
+		t.Fatalf("complete status=%s err=%v", ready.Status, err)
+	}
+	if _, err = manager.Download(ctx, "00000000-0000-0000-0000-000000000002", ready.ID); !errors.Is(err, storage.ErrNotFound) {
+		t.Fatalf("cross-tenant download error=%v", err)
+	}
+	if _, err = manager.CreateUpload(ctx, "00000000-0000-0000-0000-000000000001", "00000000-0000-0000-0000-000000000001", "input", "application/octet-stream", artifact.MaxArtifactBytes+1, "", nil); err == nil {
+		t.Fatal("oversized input artifact was accepted")
+	}
+	definition, err := store.CreateWorkflow(ctx, "00000000-0000-0000-0000-000000000001", "00000000-0000-0000-0000-000000000001", "artifact-input", workflow.DAG{Tasks: map[string]workflow.TaskSpec{"use": {Handler: "test.use"}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err = store.CreateRun(ctx, "00000000-0000-0000-0000-000000000002", "", definition.ID, "cross-tenant-artifact", json.RawMessage(`{}`), ready.ID); !errors.Is(err, storage.ErrNotFound) {
+		t.Fatalf("cross-tenant input artifact error=%v", err)
+	}
+	run, created, err := store.CreateRun(ctx, "00000000-0000-0000-0000-000000000001", "00000000-0000-0000-0000-000000000001", definition.ID, "artifact-run", json.RawMessage(`{}`), ready.ID)
+	if err != nil || !created || run.InputArtifactURI == nil {
+		t.Fatalf("artifact run created=%v uri=%v err=%v", created, run.InputArtifactURI, err)
+	}
+	var taskID string
+	if err = store.Pool.QueryRow(ctx, `UPDATE task_runs SET status='DISPATCHING' WHERE workflow_run_id=$1 RETURNING id`, run.ID).Scan(&taskID); err != nil {
+		t.Fatal(err)
+	}
+	leased, err := store.LeaseTask(ctx, taskID, "worker", time.Minute)
+	if err != nil || leased.InputArtifactURI == nil || *leased.InputArtifactURI != ready.ObjectURI {
+		t.Fatalf("lease artifact URI=%v err=%v", leased.InputArtifactURI, err)
+	}
+}
 
 func TestPostgresIdempotencyAndConcurrentClaims(t *testing.T) {
 	ctx := context.Background()

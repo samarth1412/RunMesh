@@ -16,6 +16,7 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"github.com/robfig/cron/v3"
+	"github.com/runmesh/runmesh/internal/artifact"
 	"github.com/runmesh/runmesh/internal/auth"
 	"github.com/runmesh/runmesh/internal/storage"
 	"github.com/runmesh/runmesh/internal/workflow"
@@ -32,13 +33,18 @@ type Server struct {
 	RateLimit       func(http.Handler) http.Handler
 	DependencyReady func(context.Context) error
 	APIKeyPepper    string
+	Artifacts       *artifact.Manager
 	Requests        *prometheus.HistogramVec
 }
 
-func New(store *storage.Store, lease time.Duration, authMiddleware, workerAuth, rateLimit func(http.Handler) http.Handler, dependencyReady func(context.Context) error, apiKeyPepper string) *Server {
+func New(store *storage.Store, lease time.Duration, authMiddleware, workerAuth, rateLimit func(http.Handler) http.Handler, dependencyReady func(context.Context) error, apiKeyPepper string, artifacts ...*artifact.Manager) *Server {
 	req := prometheus.NewHistogramVec(prometheus.HistogramOpts{Name: "api_request_duration_seconds", Help: "Public API request latency", Buckets: prometheus.DefBuckets}, []string{"method", "route", "status"})
 	prometheus.MustRegister(req)
-	return &Server{Store: store, LeaseDuration: lease, Auth: authMiddleware, WorkerAuth: workerAuth, RateLimit: rateLimit, DependencyReady: dependencyReady, APIKeyPepper: apiKeyPepper, Requests: req}
+	server := &Server{Store: store, LeaseDuration: lease, Auth: authMiddleware, WorkerAuth: workerAuth, RateLimit: rateLimit, DependencyReady: dependencyReady, APIKeyPepper: apiKeyPepper, Requests: req}
+	if len(artifacts) > 0 {
+		server.Artifacts = artifacts[0]
+	}
+	return server
 }
 
 func (s *Server) Handler() http.Handler {
@@ -64,6 +70,9 @@ func (s *Server) Handler() http.Handler {
 	public.HandleFunc("POST /v1/api-keys", auth.RequireHumanRole("admin", s.createAPIKey))
 	public.HandleFunc("POST /v1/api-keys/{id}/rotate", auth.RequireHumanRole("admin", s.rotateAPIKey))
 	public.HandleFunc("DELETE /v1/api-keys/{id}", auth.RequireHumanRole("admin", s.revokeAPIKey))
+	public.HandleFunc("POST /v1/artifacts/uploads", auth.Require("developer", "artifacts:write", s.createArtifactUpload))
+	public.HandleFunc("POST /v1/artifacts/{id}/complete", auth.Require("developer", "artifacts:write", s.completeArtifactUpload))
+	public.HandleFunc("GET /v1/artifacts/{id}/download", auth.Require("viewer", "artifacts:read", s.downloadArtifact))
 	publicHandler := s.instrument(public)
 	if s.RateLimit != nil {
 		publicHandler = s.RateLimit(publicHandler)
@@ -76,6 +85,9 @@ func (s *Server) Handler() http.Handler {
 	internal.HandleFunc("POST /internal/v1/tasks/{id}/complete", s.complete)
 	internal.HandleFunc("POST /internal/v1/tasks/{id}/fail", s.fail)
 	internal.HandleFunc("POST /internal/v1/workers/{id}/heartbeat", s.workerHeartbeat)
+	internal.HandleFunc("POST /internal/v1/artifacts/uploads", s.createArtifactUpload)
+	internal.HandleFunc("POST /internal/v1/artifacts/{id}/complete", s.completeArtifactUpload)
+	internal.HandleFunc("GET /internal/v1/artifacts/{id}/download", s.downloadArtifact)
 	root.Handle("/internal/v1/", s.WorkerAuth(internal))
 	root.HandleFunc("GET /health/live", func(w http.ResponseWriter, r *http.Request) { writeJSON(w, 200, map[string]string{"status": "ok"}) })
 	root.HandleFunc("GET /health/ready", s.ready)
@@ -154,8 +166,8 @@ func (s *Server) createRun(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req struct {
-		Input            json.RawMessage `json:"input"`
-		InputArtifactURI string          `json:"input_artifact_uri,omitempty"`
+		Input           json.RawMessage `json:"input"`
+		InputArtifactID string          `json:"input_artifact_id,omitempty"`
 	}
 	if !decode(w, r, &req) {
 		return
@@ -169,7 +181,7 @@ func (s *Server) createRun(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	p := auth.PrincipalFrom(r.Context())
-	run, created, err := s.Store.CreateRun(r.Context(), p.TenantID, p.UserID, r.PathValue("id"), key, req.Input)
+	run, created, err := s.Store.CreateRun(r.Context(), p.TenantID, p.UserID, r.PathValue("id"), key, req.Input, req.InputArtifactID)
 	if handleErr(w, err) {
 		return
 	}
@@ -180,10 +192,84 @@ func (s *Server) createRun(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Location", "/v1/runs/"+run.ID)
 	writeJSON(w, status, run)
 }
-func (s *Server) getRun(w http.ResponseWriter, r *http.Request) {
-	run, err := s.Store.GetRun(r.Context(), auth.PrincipalFrom(r.Context()).TenantID, r.PathValue("id"))
+
+func (s *Server) createArtifactUpload(w http.ResponseWriter, r *http.Request) {
+	if s.Artifacts == nil {
+		writeError(w, http.StatusServiceUnavailable, "artifact storage is not configured")
+		return
+	}
+	var req struct {
+		Kind           string  `json:"kind"`
+		ContentType    string  `json:"content_type"`
+		SizeBytes      int64   `json:"size_bytes"`
+		ChecksumSHA256 string  `json:"checksum_sha256,omitempty"`
+		TaskRunID      *string `json:"task_run_id,omitempty"`
+	}
+	if !decode(w, r, &req) {
+		return
+	}
+	p := auth.PrincipalFrom(r.Context())
+	upload, err := s.Artifacts.CreateUpload(r.Context(), p.TenantID, p.UserID, req.Kind, req.ContentType, req.SizeBytes, req.ChecksumSHA256, req.TaskRunID)
+	if err != nil {
+		if errors.Is(err, storage.ErrNotFound) {
+			writeError(w, 404, "task not found")
+			return
+		}
+		writeError(w, 422, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusCreated, upload)
+}
+
+func (s *Server) completeArtifactUpload(w http.ResponseWriter, r *http.Request) {
+	if s.Artifacts == nil {
+		writeError(w, http.StatusServiceUnavailable, "artifact storage is not configured")
+		return
+	}
+	p := auth.PrincipalFrom(r.Context())
+	a, err := s.Artifacts.Complete(r.Context(), p.TenantID, r.PathValue("id"))
 	if handleErr(w, err) {
 		return
+	}
+	writeJSON(w, http.StatusOK, a)
+}
+
+func (s *Server) downloadArtifact(w http.ResponseWriter, r *http.Request) {
+	if s.Artifacts == nil {
+		writeError(w, http.StatusServiceUnavailable, "artifact storage is not configured")
+		return
+	}
+	p := auth.PrincipalFrom(r.Context())
+	download, err := s.Artifacts.Download(r.Context(), p.TenantID, r.PathValue("id"))
+	if handleErr(w, err) {
+		return
+	}
+	writeJSON(w, http.StatusOK, download)
+}
+func (s *Server) getRun(w http.ResponseWriter, r *http.Request) {
+	tenantID := auth.PrincipalFrom(r.Context()).TenantID
+	run, err := s.Store.GetRun(r.Context(), tenantID, r.PathValue("id"))
+	if handleErr(w, err) {
+		return
+	}
+	if s.Artifacts != nil {
+		if run.InputArtifactURI != nil {
+			if signed, signErr := s.Artifacts.Download(r.Context(), tenantID, *run.InputArtifactURI); signErr == nil {
+				run.InputArtifactDownloadURL = signed.URL
+			}
+		}
+		for index := range run.Tasks {
+			if run.Tasks[index].OutputArtifactURI != nil {
+				if signed, signErr := s.Artifacts.Download(r.Context(), tenantID, *run.Tasks[index].OutputArtifactURI); signErr == nil {
+					run.Tasks[index].OutputArtifactDownloadURL = signed.URL
+				}
+			}
+			if run.Tasks[index].LogArtifactURI != nil {
+				if signed, signErr := s.Artifacts.Download(r.Context(), tenantID, *run.Tasks[index].LogArtifactURI); signErr == nil {
+					run.Tasks[index].LogArtifactDownloadURL = signed.URL
+				}
+			}
+		}
 	}
 	writeJSON(w, 200, run)
 }

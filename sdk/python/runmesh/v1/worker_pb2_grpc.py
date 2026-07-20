@@ -39,6 +39,21 @@ class WorkerServiceStub:
                 request_serializer=runmesh_dot_v1_dot_worker__pb2.FailRequest.SerializeToString,
                 response_deserializer=runmesh_dot_v1_dot_worker__pb2.FailResponse.FromString,
                 _registered_method=True)
+        self.CreateArtifactUpload = channel.unary_unary(
+                '/runmesh.v1.WorkerService/CreateArtifactUpload',
+                request_serializer=runmesh_dot_v1_dot_worker__pb2.CreateArtifactUploadRequest.SerializeToString,
+                response_deserializer=runmesh_dot_v1_dot_worker__pb2.CreateArtifactUploadResponse.FromString,
+                _registered_method=True)
+        self.CompleteArtifactUpload = channel.unary_unary(
+                '/runmesh.v1.WorkerService/CompleteArtifactUpload',
+                request_serializer=runmesh_dot_v1_dot_worker__pb2.CompleteArtifactUploadRequest.SerializeToString,
+                response_deserializer=runmesh_dot_v1_dot_worker__pb2.CompleteArtifactUploadResponse.FromString,
+                _registered_method=True)
+        self.GetArtifactDownload = channel.unary_unary(
+                '/runmesh.v1.WorkerService/GetArtifactDownload',
+                request_serializer=runmesh_dot_v1_dot_worker__pb2.GetArtifactDownloadRequest.SerializeToString,
+                response_deserializer=runmesh_dot_v1_dot_worker__pb2.GetArtifactDownloadResponse.FromString,
+                _registered_method=True)
 
 
 class WorkerServiceServicer:
@@ -74,6 +89,24 @@ class WorkerServiceServicer:
         context.set_details('Method not implemented!')
         raise NotImplementedError('Method not implemented!')
 
+    def CreateArtifactUpload(self, request, context):
+        """Missing associated documentation comment in .proto file."""
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+    def CompleteArtifactUpload(self, request, context):
+        """Missing associated documentation comment in .proto file."""
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+    def GetArtifactDownload(self, request, context):
+        """Missing associated documentation comment in .proto file."""
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
 
 def add_WorkerServiceServicer_to_server(servicer, server):
     rpc_method_handlers = {
@@ -101,6 +134,21 @@ def add_WorkerServiceServicer_to_server(servicer, server):
                     servicer.Fail,
                     request_deserializer=runmesh_dot_v1_dot_worker__pb2.FailRequest.FromString,
                     response_serializer=runmesh_dot_v1_dot_worker__pb2.FailResponse.SerializeToString,
+            ),
+            'CreateArtifactUpload': grpc.unary_unary_rpc_method_handler(
+                    servicer.CreateArtifactUpload,
+                    request_deserializer=runmesh_dot_v1_dot_worker__pb2.CreateArtifactUploadRequest.FromString,
+                    response_serializer=runmesh_dot_v1_dot_worker__pb2.CreateArtifactUploadResponse.SerializeToString,
+            ),
+            'CompleteArtifactUpload': grpc.unary_unary_rpc_method_handler(
+                    servicer.CompleteArtifactUpload,
+                    request_deserializer=runmesh_dot_v1_dot_worker__pb2.CompleteArtifactUploadRequest.FromString,
+                    response_serializer=runmesh_dot_v1_dot_worker__pb2.CompleteArtifactUploadResponse.SerializeToString,
+            ),
+            'GetArtifactDownload': grpc.unary_unary_rpc_method_handler(
+                    servicer.GetArtifactDownload,
+                    request_deserializer=runmesh_dot_v1_dot_worker__pb2.GetArtifactDownloadRequest.FromString,
+                    response_serializer=runmesh_dot_v1_dot_worker__pb2.GetArtifactDownloadResponse.SerializeToString,
             ),
     }
     generic_handler = grpc.method_handlers_generic_handler(
@@ -238,6 +286,87 @@ class WorkerService:
             '/runmesh.v1.WorkerService/Fail',
             runmesh_dot_v1_dot_worker__pb2.FailRequest.SerializeToString,
             runmesh_dot_v1_dot_worker__pb2.FailResponse.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def CreateArtifactUpload(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/runmesh.v1.WorkerService/CreateArtifactUpload',
+            runmesh_dot_v1_dot_worker__pb2.CreateArtifactUploadRequest.SerializeToString,
+            runmesh_dot_v1_dot_worker__pb2.CreateArtifactUploadResponse.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def CompleteArtifactUpload(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/runmesh.v1.WorkerService/CompleteArtifactUpload',
+            runmesh_dot_v1_dot_worker__pb2.CompleteArtifactUploadRequest.SerializeToString,
+            runmesh_dot_v1_dot_worker__pb2.CompleteArtifactUploadResponse.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def GetArtifactDownload(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/runmesh.v1.WorkerService/GetArtifactDownload',
+            runmesh_dot_v1_dot_worker__pb2.GetArtifactDownloadRequest.SerializeToString,
+            runmesh_dot_v1_dot_worker__pb2.GetArtifactDownloadResponse.FromString,
             options,
             channel_credentials,
             insecure,

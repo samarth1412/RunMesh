@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import inspect
 import json
 import logging
@@ -45,6 +46,7 @@ class TaskContext:
     trace_parent: str | None = None
     _cancelled: asyncio.Event = field(default_factory=asyncio.Event)
     _heartbeat_requested: asyncio.Event = field(default_factory=asyncio.Event)
+    _artifact_uploader: Callable[[str, str, bytes], Awaitable[str]] | None = None
 
     @property
     def idempotency_key(self) -> str:
@@ -69,6 +71,25 @@ class TaskContext:
         if self.cancelled:
             raise asyncio.CancelledError("workflow run was cancelled")
 
+    async def upload_artifact(
+        self,
+        data: bytes | str | Mapping[str, Any],
+        *,
+        kind: str = "output",
+        content_type: str = "application/octet-stream",
+    ) -> str:
+        """Upload a task-owned artifact and return its opaque artifact URI."""
+        if self._artifact_uploader is None:
+            raise RuntimeError("artifact uploads are only available while a task is running")
+        if isinstance(data, str):
+            encoded = data.encode()
+        elif isinstance(data, bytes):
+            encoded = data
+        else:
+            encoded = json.dumps(data, separators=(",", ":")).encode()
+            content_type = "application/json"
+        return await self._artifact_uploader(kind, content_type, encoded)
+
 
 class Worker:
     """Consumes durable dispatch events and executes registered handlers.
@@ -91,12 +112,14 @@ class Worker:
         heartbeat_interval: float = 10.0,
     ) -> None:
         self.endpoint = endpoint.removeprefix("grpc://").removeprefix("http://").rstrip("/")
-        default_http = self.endpoint[:-4] + "8080" if self.endpoint.endswith("7001") else self.endpoint
-        self.base_url = f"http://{(http_endpoint or default_http).removeprefix('http://').rstrip('/')}"
-        self.api_key = api_key
-        self.brokers: str = (
-            brokers or os.environ.get("RUNMESH_KAFKA_BROKERS") or "localhost:19092"
+        default_http = (
+            self.endpoint[:-4] + "8080" if self.endpoint.endswith("7001") else self.endpoint
         )
+        self.base_url = (
+            f"http://{(http_endpoint or default_http).removeprefix('http://').rstrip('/')}"
+        )
+        self.api_key = api_key
+        self.brokers: str = brokers or os.environ.get("RUNMESH_KAFKA_BROKERS") or "localhost:19092"
         self.topic = topic
         self.group_id = group_id
         self.worker_id = worker_id or f"{socket.gethostname()}-{uuid.uuid4().hex[:8]}"
@@ -127,9 +150,7 @@ class Worker:
             with suppress(NotImplementedError):
                 loop.add_signal_handler(signum, self._stopping.set)
         timeout = aiohttp.ClientTimeout(total=30)
-        async with aiohttp.ClientSession(
-            headers={"Authorization": f"Bearer {self.api_key}"}, timeout=timeout
-        ) as session:
+        async with aiohttp.ClientSession(timeout=timeout) as session:
             channel = grpc.aio.insecure_channel(self.endpoint)
             self._grpc_stub = worker_pb2_grpc.WorkerServiceStub(channel)
             reporter = asyncio.create_task(self._report_worker(session))
@@ -204,6 +225,9 @@ class Worker:
             attempt=task["attempt_count"],
             timeout_seconds=task["timeout_seconds"],
             trace_parent=trace_parent,
+            _artifact_uploader=lambda kind, content_type, data: self._upload_artifact(
+                session, task_id, kind, content_type, data, trace_parent
+            ),
         )
         heartbeat = asyncio.create_task(self._heartbeat(session, context))
         try:
@@ -211,6 +235,12 @@ class Worker:
             if handler is None:
                 raise RetryableError(f"worker does not provide handler {task['handler']!r}")
             task_input = task["input"]
+            if task.get("input_artifact_uri"):
+                task_input = json.loads(
+                    await self._download_artifact(
+                        session, task_id, str(task["input_artifact_uri"]), trace_parent
+                    )
+                )
             if isinstance(task_input, str):
                 task_input = json.loads(task_input)
             if inspect.iscoroutinefunction(handler):
@@ -222,10 +252,28 @@ class Worker:
                     asyncio.to_thread(handler, task_input, context), context.timeout_seconds
                 )
             context.raise_if_cancelled()
+            encoded_result = json.dumps(
+                result if result is not None else {}, separators=(",", ":")
+            ).encode()
+            output_artifact_uri = ""
+            output_value = result if result is not None else {}
+            if len(encoded_result) > 256 * 1024:
+                output_artifact_uri = await self._upload_artifact(
+                    session, task_id, "output", "application/json", encoded_result, trace_parent
+                )
+                output_value = {}
+            log_data = json.dumps({"task_run_id": task_id, "status": "SUCCEEDED"}).encode()
+            log_artifact_uri = await self._upload_artifact(
+                session, task_id, "log", "application/json", log_data, trace_parent
+            )
             await self._post(
                 session,
                 f"/internal/v1/tasks/{task_id}/complete",
-                {"output": result if result is not None else {}},
+                {
+                    "output": output_value,
+                    "output_artifact_uri": output_artifact_uri,
+                    "log_artifact_uri": log_artifact_uri,
+                },
                 trace_parent=trace_parent,
             )
         except PermanentError as exc:
@@ -306,7 +354,9 @@ class Worker:
         if "/tasks/" in path:
             body = {"worker_id": self.worker_id, **payload}
             return await self._task_rpc(path, body, trace_parent)
-        headers = {"traceparent": trace_parent} if trace_parent else None
+        headers = {"Authorization": f"Bearer {self.api_key}"}
+        if trace_parent:
+            headers["traceparent"] = trace_parent
         async with session.post(self.base_url + path, json=payload, headers=headers) as response:
             if response.status == 409:
                 raise Conflict(await response.text())
@@ -337,9 +387,7 @@ class Worker:
                 return _task_message(response.task)
             if action == "heartbeat":
                 response = await self._grpc_stub.Heartbeat(
-                    worker_pb2.HeartbeatRequest(
-                        task_run_id=task_id, worker_id=self.worker_id
-                    ),
+                    worker_pb2.HeartbeatRequest(task_run_id=task_id, worker_id=self.worker_id),
                     metadata=metadata,
                 )
                 return {"cancelled": response.cancelled}
@@ -352,6 +400,7 @@ class Worker:
                         worker_id=self.worker_id,
                         output=output,
                         output_artifact_uri=str(payload.get("output_artifact_uri") or ""),
+                        log_artifact_uri=str(payload.get("log_artifact_uri") or ""),
                     ),
                     metadata=metadata,
                 )
@@ -374,6 +423,73 @@ class Worker:
             if exc.code() in {grpc.StatusCode.FAILED_PRECONDITION, grpc.StatusCode.ALREADY_EXISTS}:
                 raise Conflict(exc.details()) from exc
             raise
+
+    async def _upload_artifact(
+        self,
+        session: aiohttp.ClientSession,
+        task_id: str,
+        kind: str,
+        content_type: str,
+        data: bytes,
+        trace_parent: str | None,
+    ) -> str:
+        metadata = [("authorization", f"Bearer {self.api_key}")]
+        if trace_parent:
+            metadata.append(("traceparent", trace_parent))
+        created = await self._grpc_stub.CreateArtifactUpload(
+            worker_pb2.CreateArtifactUploadRequest(
+                task_run_id=task_id,
+                worker_id=self.worker_id,
+                kind=kind,
+                content_type=content_type,
+                size_bytes=len(data),
+                checksum_sha256=hashlib.sha256(data).hexdigest(),
+            ),
+            metadata=metadata,
+        )
+        upload_headers = {
+            key: value for key, value in created.headers.items() if key.lower() != "host"
+        }
+        upload_headers.setdefault("Content-Type", content_type)
+        async with session.put(
+            created.upload_url, data=data, headers=upload_headers
+        ) as response:
+            if response.status < 200 or response.status >= 300:
+                detail = (await response.text())[:1000]
+                raise RetryableError(
+                    f"artifact upload returned {response.status}: {detail}"
+                )
+        completed = await self._grpc_stub.CompleteArtifactUpload(
+            worker_pb2.CompleteArtifactUploadRequest(
+                artifact_id=created.artifact_id,
+                worker_id=self.worker_id,
+                task_run_id=task_id,
+            ),
+            metadata=metadata,
+        )
+        return str(completed.artifact_uri)
+
+    async def _download_artifact(
+        self,
+        session: aiohttp.ClientSession,
+        task_id: str,
+        artifact_uri: str,
+        trace_parent: str | None,
+    ) -> bytes:
+        metadata = [("authorization", f"Bearer {self.api_key}")]
+        if trace_parent:
+            metadata.append(("traceparent", trace_parent))
+        signed = await self._grpc_stub.GetArtifactDownload(
+            worker_pb2.GetArtifactDownloadRequest(
+                artifact_uri=artifact_uri,
+                worker_id=self.worker_id,
+                task_run_id=task_id,
+            ),
+            metadata=metadata,
+        )
+        async with session.get(signed.download_url) as response:
+            response.raise_for_status()
+            return await response.read()
 
     async def _report_worker(self, session: aiohttp.ClientSession) -> None:
         while True:
@@ -413,4 +529,5 @@ def _task_message(task: Any) -> JSON:
         "attempt_count": task.attempt,
         "timeout_seconds": task.timeout_seconds,
         "input": dict(task.input),
+        "input_artifact_uri": task.input_artifact_uri,
     }
