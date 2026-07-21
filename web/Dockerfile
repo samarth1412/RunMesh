@@ -11,10 +11,11 @@ RUN VITE_DEV_AUTH="$WEB_DEVELOPMENT_MODE" \
     VITE_OIDC_CLIENT_ID="$VITE_OIDC_CLIENT_ID" \
     npm run build
 
-FROM nginx:1.27-alpine
+FROM nginx:1.28-alpine
 COPY web/nginx.conf /etc/nginx/conf.d/default.conf
 COPY --from=build /app/dist /usr/share/nginx/html
-RUN chown -R nginx:nginx /var/cache/nginx /usr/share/nginx/html \
+RUN apk upgrade --no-cache libcrypto3 libssl3 \
+    && chown -R nginx:nginx /var/cache/nginx /usr/share/nginx/html \
     && sed -i 's/user  nginx;/user nginx;/' /etc/nginx/nginx.conf \
     && sed -i 's|pid .*;|pid /tmp/nginx.pid;|' /etc/nginx/nginx.conf
 USER 101:101
