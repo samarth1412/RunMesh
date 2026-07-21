@@ -1,7 +1,17 @@
 .env
+.env.*
+!.env.example
+.secrets/
+*.pem
+*.key
+*.p12
+credentials.json
 .DS_Store
 bin/
 coverage/
+.coverage
+coverage.xml
+htmlcov/
 dist/
 node_modules/
 __pycache__/

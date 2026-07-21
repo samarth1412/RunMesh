@@ -44,7 +44,7 @@ if [[ "${RUNMESH_SKIP_BUILD:-0}" != "1" ]]; then
   docker build -t runmesh/control-plane:rolling --build-arg SERVICE=control-plane .
   docker build -t runmesh/scheduler:rolling --build-arg SERVICE=scheduler .
   docker build -t runmesh/worker-go:rolling --build-arg SERVICE=worker-go .
-  docker build -t runmesh/web:rolling -f web/Dockerfile --build-arg VITE_DEV_AUTH=true .
+  docker build -t runmesh/web:rolling -f web/Dockerfile --build-arg WEB_DEVELOPMENT_MODE=true .
 fi
 kind load docker-image --name "$cluster" runmesh/control-plane:rolling runmesh/scheduler:rolling runmesh/worker-go:rolling runmesh/web:rolling
 
@@ -53,6 +53,7 @@ kubectl -n "$namespace" apply -f tests/deployment/kind-dependencies.yaml
 kubectl -n "$namespace" rollout status deployment/postgres --timeout=180s
 kubectl -n "$namespace" rollout status deployment/redis --timeout=180s
 kubectl -n "$namespace" rollout status deployment/redpanda --timeout=240s
+kubectl -n "$namespace" rollout status deployment/minio --timeout=180s
 
 kubectl -n "$namespace" create configmap runmesh-migrations --from-file=migrations
 kubectl -n "$namespace" apply -f - <<'YAML'

@@ -12,6 +12,9 @@ data:
   RUNMESH_HTTP_ENDPOINT: "runmesh-control-plane:8080"
   RUNMESH_KAFKA_BROKERS: {{ required "config.kafkaBrokers is required; Kafka is externally supplied" .Values.config.kafkaBrokers | quote }}
   RUNMESH_KAFKA_TOPIC: {{ .Values.config.kafkaTopic | quote }}
+  RUNMESH_OUTBOX_BATCH_SIZE: {{ .Values.config.outboxBatchSize | quote }}
+  RUNMESH_OUTBOX_CLAIM_TTL: {{ .Values.config.outboxClaimTTL | quote }}
+  RUNMESH_OUTBOX_PUBLISH_TIMEOUT: {{ .Values.config.outboxPublishTimeout | quote }}
   RUNMESH_DEV_AUTH: {{ .Values.config.devAuth | quote }}
   RUNMESH_OIDC_ISSUER: {{ .Values.config.oidcIssuer | quote }}
   RUNMESH_OIDC_AUDIENCE: {{ .Values.config.oidcAudience | quote }}

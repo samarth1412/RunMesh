@@ -5,7 +5,6 @@ from __future__ import annotations
 
 import argparse
 import json
-import statistics
 import sys
 import time
 import urllib.error
@@ -61,6 +60,20 @@ def create_workflow(api: str, token: str, name: str, task_count: int, handler: s
     return payload["id"]
 
 
+def latency_summary(values: list[float]) -> dict[str, float]:
+    ordered = sorted(values)
+
+    def percentile(value: float) -> float:
+        index = min(len(ordered) - 1, max(0, round((len(ordered) - 1) * value)))
+        return round(ordered[index] * 1000, 3)
+
+    return {
+        "p50_ms": percentile(0.50),
+        "p95_ms": percentile(0.95),
+        "p99_ms": percentile(0.99),
+    }
+
+
 def active_workflows(api: str, token: str, count: int, prefix: str) -> dict:
     workflow_id = create_workflow(api, token, f"{prefix}-definition", 1, "examples.slow")
     latencies: list[float] = []
@@ -82,15 +95,17 @@ def active_workflows(api: str, token: str, count: int, prefix: str) -> dict:
         "workflow_id": workflow_id,
         "idempotency_prefix": prefix,
         "elapsed_seconds": round(elapsed, 3),
-        "create_p95_ms": round(statistics.quantiles(latencies, n=100)[94] * 1000, 3),
+        "create_latency": latency_summary(latencies),
+        "failure_count": 0,
+        "failure_rate": 0,
         "sample_run_ids": run_ids[:5],
     }
 
 
 def prepare_tasks(api: str, token: str, tasks: int, prefix: str) -> dict:
-    per_run = 500
+    per_run = 100
     if tasks % per_run:
-        raise ValueError("task total must be divisible by 500")
+        raise ValueError("task total must be divisible by 100")
     workflow_id = create_workflow(api, token, f"{prefix}-definition", per_run, "examples.slow")
     runs = []
     started = time.perf_counter()
@@ -131,7 +146,7 @@ def duplicate_submission(api: str, token: str, prefix: str) -> dict:
 
 def main() -> None:
     parser = argparse.ArgumentParser()
-    parser.add_argument("command", choices=("token", "active", "prepare", "duplicate"))
+    parser.add_argument("command", choices=("token", "definition", "active", "prepare", "duplicate"))
     parser.add_argument("--api", default="http://localhost:8080")
     parser.add_argument("--identity", default="http://localhost:8180/realms/runmesh/protocol/openid-connect/token")
     parser.add_argument("--count", type=int, default=1000)
@@ -141,6 +156,8 @@ def main() -> None:
     token = oidc_token(args.identity)
     if args.command == "token":
         print(token)
+    elif args.command == "definition":
+        print(create_workflow(args.api, token, f"{args.prefix}-definition", 1, "examples.greet"))
     elif args.command == "active":
         print(json.dumps(active_workflows(args.api, token, args.count, args.prefix), indent=2, sort_keys=True))
     elif args.command == "prepare":

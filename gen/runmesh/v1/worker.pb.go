@@ -1144,7 +1144,7 @@ const file_runmesh_v1_worker_proto_rawDesc = "" +
 	"\x04Fail\x12\x17.runmesh.v1.FailRequest\x1a\x18.runmesh.v1.FailResponse\x12i\n" +
 	"\x14CreateArtifactUpload\x12'.runmesh.v1.CreateArtifactUploadRequest\x1a(.runmesh.v1.CreateArtifactUploadResponse\x12o\n" +
 	"\x16CompleteArtifactUpload\x12).runmesh.v1.CompleteArtifactUploadRequest\x1a*.runmesh.v1.CompleteArtifactUploadResponse\x12f\n" +
-	"\x13GetArtifactDownload\x12&.runmesh.v1.GetArtifactDownloadRequest\x1a'.runmesh.v1.GetArtifactDownloadResponseB5Z3github.com/runmesh/runmesh/gen/runmesh/v1;runmeshv1b\x06proto3"
+	"\x13GetArtifactDownload\x12&.runmesh.v1.GetArtifactDownloadRequest\x1a'.runmesh.v1.GetArtifactDownloadResponseB9Z7github.com/samarth1412/RunMesh/gen/runmesh/v1;runmeshv1b\x06proto3"
 
 var (
 	file_runmesh_v1_worker_proto_rawDescOnce sync.Once

@@ -1,0 +1,6 @@
+{
+  "terminated_workers": 20,
+  "idempotency_prefix": "validation-crash-20260721T000619Z",
+  "in_flight_tasks": 7,
+  "terminated_at": "2026-07-21T00:09:18.873746+00:00"
+}

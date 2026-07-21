@@ -59,3 +59,26 @@ apiVersion: v1
 kind: Service
 metadata: {name: redpanda}
 spec: {selector: {app: redpanda}, ports: [{port: 9092}]}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata: {name: minio}
+spec:
+  selector: {matchLabels: {app: minio}}
+  template:
+    metadata: {labels: {app: minio}}
+    spec:
+      containers:
+        - name: minio
+          image: minio/minio:RELEASE.2025-02-07T23-21-09Z
+          args: [server, /data]
+          env:
+            - {name: MINIO_ROOT_USER, value: runmesh}
+            - {name: MINIO_ROOT_PASSWORD, value: runmesh-development}
+          ports: [{containerPort: 9000}]
+          readinessProbe: {httpGet: {path: /minio/health/live, port: 9000}, periodSeconds: 2, failureThreshold: 30}
+---
+apiVersion: v1
+kind: Service
+metadata: {name: minio}
+spec: {selector: {app: minio}, ports: [{port: 9000}]}

@@ -15,6 +15,9 @@
         "webApiURL": {"type": "string"},
         "kafkaBrokers": {"type": "string", "minLength": 1},
         "kafkaTopic": {"type": "string", "minLength": 1},
+        "outboxBatchSize": {"type": "integer", "minimum": 1},
+        "outboxClaimTTL": {"type": "string", "pattern": "^[0-9]+(ms|s|m)$"},
+        "outboxPublishTimeout": {"type": "string", "pattern": "^[0-9]+(ms|s|m)$"},
         "rateLimitRate": {"type": "integer", "minimum": 1},
         "rateLimitBurst": {"type": "integer", "minimum": 1},
         "artifactPathStyle": {"type": "boolean"},
@@ -34,11 +37,12 @@
       "type": "array",
       "items": {
         "type": "object",
-        "required": ["name", "enabled", "type", "replicas", "credentialSecretKey", "resources", "autoscaling"],
+        "required": ["name", "enabled", "type", "groupID", "replicas", "credentialSecretKey", "resources", "autoscaling"],
         "properties": {
           "name": {"type": "string", "pattern": "^[a-z0-9]([-a-z0-9]*[a-z0-9])?$"},
           "enabled": {"type": "boolean"},
           "type": {"type": "string", "enum": ["go", "python"]},
+          "groupID": {"type": "string", "minLength": 1},
           "replicas": {"type": "integer", "minimum": 0}
         }
       }

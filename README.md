@@ -10,7 +10,17 @@
 
 RunMesh stores versioned DAGs, schedules dependency-aware tasks, and delivers work with at-least-once semantics. PostgreSQL is the source of truth, a transactional outbox bridges state to Kafka/Redpanda, and expiring leases let work recover safely after worker or infrastructure failures.
 
+| See it | Run it | Verify it |
+| --- | --- | --- |
+| [Dashboard demo](#demo) | `docker compose up --build -d` | [Raw benchmark evidence](tests/benchmarks/results/) |
+
 It ships as a complete local platform: Go control plane and scheduler, Go and Python workers, a React operations dashboard, OIDC authentication, tenant-scoped API keys, S3-compatible artifacts, live updates, metrics, logs, traces, Helm charts, and validated AWS Terraform.
+
+Latest local evidence on an Apple M4 / 16 GiB machine: **407.403 scheduler
+dispatches/second across 10,000 tasks**, **100.0 authenticated reads/second
+at 3.307 ms p95**, and **10,000/10,000 tasks completed with zero permanent
+loss after all 20 workers were terminated**. These are reproducible local
+Docker results, not production-capacity claims.
 
 ## Highlights
 
@@ -48,6 +58,18 @@ flowchart LR
 PostgreSQL remains authoritative throughout the lifecycle. Kafka delivery can be duplicated, Redis live notifications can be dropped, and workers can disappear; task IDs, conditional updates, leases, and durable API reads keep execution correct.
 
 Read the deeper [architecture](docs/architecture.md), [delivery semantics](docs/delivery-semantics.md), and [failure-mode analysis](docs/failure-modes.md).
+
+## Demo
+
+The dashboard is exercised against the real Compose stack in Playwright; it does not use a mock API. The [one-minute recovery video](docs/demo/runmesh-recovery.webm) creates and runs a DAG, terminates both bundled workers during an active lease, and shows the successful recovered attempt.
+
+| Operations overview | Completed dependency graph |
+| --- | --- |
+| ![RunMesh operations overview](docs/demo/dashboard-overview.png) | ![RunMesh completed run detail](docs/demo/run-detail.png) |
+
+![RunMesh lease recovery with immutable attempt history](docs/demo/lease-recovery.png)
+
+The exact capture procedure is documented with the media in [`docs/demo`](docs/demo/README.md); no mock API or generated screenshot is used.
 
 ## Quick start
 
@@ -137,6 +159,15 @@ worker.run()
 
 See the complete [Python worker example](examples/python_worker.py) and the [artifact guide](docs/artifacts.md).
 
+The canonical Go SDK import is:
+
+```go
+import runmesh "github.com/samarth1412/RunMesh/sdk/go"
+
+client := runmesh.NewClient("localhost:7001", "rm_<id>_<secret>", "worker-1")
+defer client.Close()
+```
+
 ## Reliability model
 
 RunMesh deliberately promises **at-least-once**, not exactly-once, execution. Task handlers that perform side effects should deduplicate using the stable `context.idempotency_key`.
@@ -169,13 +200,14 @@ The repository includes unit, race, integration, browser, security, chaos, deplo
 
 | Scenario | Recorded result |
 | --- | ---: |
-| Authenticated API load | 100.017 req/s, 4.316 ms p95, 0 failures |
-| Simultaneously active workflows | 1,000 |
-| Scheduler dispatch | 196.078 tasks/s across 10,000 tasks |
-| Worker termination and recovery | 10,000/10,000 succeeded, 0 lost |
+| Authenticated API reads | 100.0 req/s; 1.701/3.307/4.657 ms p50/p95/p99; 0 failures |
+| Workflow submissions | 50.028 req/s; 1.587/7.012/220.024 ms p50/p95/p99; 0 failures |
+| Simultaneously active workflows | 1,000 created; 0 failures; 57.608 tasks/s drain |
+| Scheduler dispatch | 407.403 tasks/s across 10,000 tasks |
+| Worker termination and recovery | 20 workers terminated; 10,000/10,000 succeeded; 7 recovered attempts; 0 lost |
 | Duplicate submission and delivery | Passed |
 
-These numbers are transparent local evidence, not a universal capacity claim. Hardware details, commands, image digests, source SHA, and raw machine-readable output are committed in the [2026-07-20 benchmark results](tests/benchmarks/results/2026-07-20/README.md).
+These numbers are transparent local evidence, not a universal capacity claim. Hardware details, commands, image digests, source SHA, and raw machine-readable output are committed in the [2026-07-21T003600Z benchmark results](tests/benchmarks/results/2026-07-21T003600Z/README.md), the canonical run against the current `HEAD`. The complete [local validation ledger](docs/validation.md) separates executed checks from remote or cloud work that remains unverified.
 
 ## Development
 
@@ -204,6 +236,22 @@ make lint             # format/check Go, Python, and TypeScript
 ```
 
 CI also validates protobuf compatibility, container vulnerability scans, Terraform, Helm, rendered Kubernetes manifests, Playwright flows, and a live kind rolling upgrade.
+
+Coverage gates intentionally target risk rather than 100%: the workflow state machine, authentication, live event broker, Python worker, and dashboard each have documented minimums in CI. Docker-backed integration tests cover PostgreSQL scheduler and storage behavior.
+
+## Limitations and future work
+
+- Published performance evidence is from one local Docker Desktop machine, not a production capacity guarantee.
+- The AWS Terraform is formatted, validated, and tested with mock providers; it has not been applied and no AWS deployment is claimed.
+- Useful worker parallelism is bounded by Kafka partition count, and a single workflow run remains intentionally confined to one partition.
+- Workers in the same Kafka consumer group must expose the same handler set; heterogeneous capability pools require separate group IDs.
+- The outbox removes broker I/O from database transactions, but PostgreSQL claim and acknowledgement writes still bound dispatch throughput.
+- The recorded 10,000-task crash run recovered all interrupted leases, but the
+  recovered-attempt delay was 132.797 seconds p50 under backlog; prioritizing
+  expired leases is future work.
+- At-least-once execution cannot make arbitrary handler side effects exactly-once. Handlers must use the stable task idempotency key.
+- Redis Pub/Sub notifications are best-effort; the dashboard re-reads durable state and falls back to polling.
+- The repository prepares `v0.1.0`, but no release or versioned image is published until a maintainer explicitly creates the tag.
 
 ## Deployment
 
@@ -236,4 +284,7 @@ Pushing a `v*` tag builds five multi-architecture GHCR images with semantic-vers
 - [Security model](docs/security.md)
 - [Artifact handling](docs/artifacts.md)
 - [Benchmarks](docs/benchmarks.md)
+- [Local validation report](docs/validation.md)
 - [Deployment and releases](docs/deployment.md)
+- [Architecture decisions](docs/adr/)
+- [Draft v0.1.0 release notes](docs/release-v0.1.0.md)

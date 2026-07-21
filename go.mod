@@ -1,4 +1,4 @@
-module github.com/runmesh/runmesh
+module github.com/samarth1412/RunMesh
 
 go 1.25.0
 

@@ -1,0 +1,22 @@
+{
+  "create_latency": {
+    "p50_ms": 6.076,
+    "p95_ms": 8.64,
+    "p99_ms": 9.736
+  },
+  "created": 1000,
+  "elapsed_seconds": 20.2,
+  "failure_count": 0,
+  "failure_rate": 0,
+  "idempotency_prefix": "validation-active-20260721T002324Z",
+  "requested": 1000,
+  "sample_run_ids": [
+    "7245969e-86b2-4806-b492-74fbd525814d",
+    "43d1b46e-c9a0-4902-bc31-acb2fc460d91",
+    "1570e8f0-99c9-457e-8637-56a41fca1785",
+    "dbaa2833-dad9-4361-9b5c-7f1dce19c8e1",
+    "092e95d4-5c7e-4887-9f35-f0e03ab1b504"
+  ],
+  "scenario": "simultaneously_active_workflows",
+  "workflow_id": "e573b078-0204-4d0f-a471-7a78b591ac3a"
+}

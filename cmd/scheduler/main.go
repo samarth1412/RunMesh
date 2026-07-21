@@ -12,12 +12,12 @@ import (
 
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
-	"github.com/runmesh/runmesh/internal/config"
-	"github.com/runmesh/runmesh/internal/live"
-	"github.com/runmesh/runmesh/internal/messaging"
-	"github.com/runmesh/runmesh/internal/scheduler"
-	"github.com/runmesh/runmesh/internal/storage"
-	"github.com/runmesh/runmesh/internal/telemetry"
+	"github.com/samarth1412/RunMesh/internal/config"
+	"github.com/samarth1412/RunMesh/internal/live"
+	"github.com/samarth1412/RunMesh/internal/messaging"
+	"github.com/samarth1412/RunMesh/internal/scheduler"
+	"github.com/samarth1412/RunMesh/internal/storage"
+	"github.com/samarth1412/RunMesh/internal/telemetry"
 )
 
 func main() {
@@ -51,7 +51,7 @@ func main() {
 	defer liveBroker.Close()
 	published := prometheus.NewCounterVec(prometheus.CounterOpts{Name: "scheduler_outbox_published_total", Help: "Outbox events published to Kafka by tenant and event type."}, []string{"tenant_id", "event_type"})
 	prometheus.MustRegister(published)
-	service := scheduler.Service{Store: store, Publisher: publisher, Live: liveBroker, Published: published, ScheduleInterval: cfg.SchedulerInterval, OutboxInterval: cfg.OutboxInterval}
+	service := scheduler.Service{Store: store, Publisher: publisher, Live: liveBroker, Published: published, ScheduleInterval: cfg.SchedulerInterval, OutboxInterval: cfg.OutboxInterval, OutboxBatchSize: cfg.OutboxBatchSize, OutboxClaimTTL: cfg.OutboxClaimTTL, OutboxPublishTimeout: cfg.OutboxPublishTimeout}
 	metricsServer := &http.Server{Addr: cfg.SchedulerMetricsAddr, Handler: promhttp.Handler(), ReadHeaderTimeout: 3 * time.Second}
 	go func() {
 		if serveErr := metricsServer.ListenAndServe(); serveErr != nil && !errors.Is(serveErr, http.ErrServerClosed) {

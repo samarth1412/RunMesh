@@ -10,8 +10,8 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
-	"github.com/runmesh/runmesh/internal/tracecontext"
-	"github.com/runmesh/runmesh/internal/workflow"
+	"github.com/samarth1412/RunMesh/internal/tracecontext"
+	"github.com/samarth1412/RunMesh/internal/workflow"
 )
 
 var ErrNotFound = errors.New("not found")
@@ -235,19 +235,46 @@ func (s *Store) GetRun(ctx context.Context, tenantID, id string) (workflow.Run, 
 	if err != nil {
 		return r, err
 	}
-	rows, err := s.Pool.Query(ctx, `SELECT id,workflow_run_id,task_key,handler,status,priority,available_at,attempt_count,maximum_attempts,timeout_seconds,lease_owner,lease_expires_at,input,output,output_artifact_uri,(SELECT log_artifact_uri FROM task_attempts WHERE task_run_id=task_runs.id AND log_artifact_uri IS NOT NULL ORDER BY attempt_number DESC LIMIT 1) FROM task_runs WHERE workflow_run_id=$1 ORDER BY created_at,task_key`, id)
+	rows, err := s.Pool.Query(ctx, `SELECT id,workflow_run_id,task_key,handler,status,priority,available_at,attempt_count,maximum_attempts,timeout_seconds,lease_owner,lease_expires_at,input,output,output_artifact_uri,
+		(SELECT log_artifact_uri FROM task_attempts WHERE task_run_id=task_runs.id AND log_artifact_uri IS NOT NULL ORDER BY attempt_number DESC LIMIT 1),
+		ARRAY(SELECT upstream.task_key FROM task_dependencies d JOIN task_runs upstream ON upstream.id=d.depends_on_task_run_id WHERE d.task_run_id=task_runs.id ORDER BY upstream.task_key)
+		FROM task_runs WHERE workflow_run_id=$1 ORDER BY created_at,task_key`, id)
 	if err != nil {
 		return r, err
 	}
-	defer rows.Close()
+	taskIndexes := make(map[string]int)
 	for rows.Next() {
 		var t workflow.TaskRun
-		if err = rows.Scan(&t.ID, &t.WorkflowRunID, &t.TaskKey, &t.Handler, &t.Status, &t.Priority, &t.AvailableAt, &t.AttemptCount, &t.MaximumAttempts, &t.TimeoutSeconds, &t.LeaseOwner, &t.LeaseExpiresAt, &t.Input, &t.Output, &t.OutputArtifactURI, &t.LogArtifactURI); err != nil {
+		if err = rows.Scan(&t.ID, &t.WorkflowRunID, &t.TaskKey, &t.Handler, &t.Status, &t.Priority, &t.AvailableAt, &t.AttemptCount, &t.MaximumAttempts, &t.TimeoutSeconds, &t.LeaseOwner, &t.LeaseExpiresAt, &t.Input, &t.Output, &t.OutputArtifactURI, &t.LogArtifactURI, &t.DependsOn); err != nil {
+			rows.Close()
 			return r, err
 		}
+		taskIndexes[t.ID] = len(r.Tasks)
 		r.Tasks = append(r.Tasks, t)
 	}
-	return r, rows.Err()
+	if err = rows.Err(); err != nil {
+		rows.Close()
+		return r, err
+	}
+	rows.Close()
+	attemptRows, err := s.Pool.Query(ctx, `SELECT a.task_run_id,a.attempt_number,a.worker_id,a.scheduled_at,a.executing_at,a.started_at,a.ended_at,
+		COALESCE(a.exit_status,''),COALESCE(a.error_type,''),COALESCE(a.error_message,''),COALESCE(a.trace_id,''),COALESCE(a.artifact_uri,''),COALESCE(a.log_artifact_uri,'')
+		FROM task_attempts a JOIN task_runs t ON t.id=a.task_run_id WHERE t.workflow_run_id=$1 ORDER BY t.created_at,t.task_key,a.attempt_number`, id)
+	if err != nil {
+		return r, err
+	}
+	defer attemptRows.Close()
+	for attemptRows.Next() {
+		var taskID string
+		var attempt workflow.TaskAttempt
+		if err = attemptRows.Scan(&taskID, &attempt.AttemptNumber, &attempt.WorkerID, &attempt.ScheduledAt, &attempt.ExecutingAt, &attempt.StartedAt, &attempt.EndedAt, &attempt.ExitStatus, &attempt.ErrorType, &attempt.ErrorMessage, &attempt.TraceID, &attempt.ArtifactURI, &attempt.LogArtifactURI); err != nil {
+			return r, err
+		}
+		if index, ok := taskIndexes[taskID]; ok {
+			r.Tasks[index].Attempts = append(r.Tasks[index].Attempts, attempt)
+		}
+	}
+	return r, attemptRows.Err()
 }
 
 func (s *Store) ListRuns(ctx context.Context, tenantID string, limit int) ([]workflow.Run, error) {

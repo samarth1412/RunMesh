@@ -11,7 +11,7 @@ import (
 	"strings"
 	"time"
 
-	runmeshv1 "github.com/runmesh/runmesh/gen/runmesh/v1"
+	runmeshv1 "github.com/samarth1412/RunMesh/gen/runmesh/v1"
 	"go.opentelemetry.io/contrib/instrumentation/google.golang.org/grpc/otelgrpc"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
@@ -126,7 +126,15 @@ func (c *Client) Complete(ctx context.Context, id string, output any) (Task, err
 	if err != nil {
 		return Task{}, err
 	}
-	response, err := c.worker.Complete(c.rpcContext(ctx), &runmeshv1.CompleteRequest{TaskRunId: id, WorkerId: c.workerID, Output: structured, OutputArtifactUri: artifactURI})
+	logData, err := json.Marshal(map[string]any{"task_run_id": id, "status": "SUCCEEDED"})
+	if err != nil {
+		return Task{}, err
+	}
+	logArtifactURI, err := c.UploadArtifact(ctx, id, "log", "application/json", logData)
+	if err != nil {
+		return Task{}, fmt.Errorf("upload task log: %w", err)
+	}
+	response, err := c.worker.Complete(c.rpcContext(ctx), &runmeshv1.CompleteRequest{TaskRunId: id, WorkerId: c.workerID, Output: structured, OutputArtifactUri: artifactURI, LogArtifactUri: logArtifactURI})
 	if err != nil {
 		return Task{}, err
 	}

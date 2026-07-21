@@ -12,11 +12,20 @@ config:
   oidcIssuer: ""
   oidcJwksURL: ""
   corsAllowlist: http://127.0.0.1:18080
+  artifactEndpoint: http://minio:9000
+  artifactPublicEndpoint: http://minio:9000
+  artifactPathStyle: true
+  artifactCreateBucket: true
+
+secret:
+  artifactAccessKey: runmesh
+  artifactSecretKey: runmesh-development
 
 workerPools:
   - name: default-go
     enabled: true
     type: go
+    groupID: runmesh-workers
     replicas: 2
     image: {repository: "", tag: "", pullPolicy: ""}
     credentialSecretName: ""

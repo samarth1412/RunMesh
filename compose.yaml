@@ -29,6 +29,22 @@ services:
     ports: ["8081:8080"]
     depends_on: {redpanda: {condition: service_healthy}}
 
+  redpanda-init:
+    image: redpandadata/redpanda:v24.3.15
+    entrypoint: ["/bin/sh", "-ec"]
+    environment: {RUNMESH_KAFKA_PARTITIONS: "6"}
+    command:
+      - |
+        current="$$(rpk topic list -X brokers=redpanda:9092 | awk '$$1 == "runmesh.tasks" {print $$2}')"
+        if [ -n "$$current" ]; then
+          if [ "$$current" -lt "$$RUNMESH_KAFKA_PARTITIONS" ]; then
+            rpk topic add-partitions runmesh.tasks --num "$$((RUNMESH_KAFKA_PARTITIONS-current))" -X brokers=redpanda:9092
+          fi
+        else
+          rpk topic create runmesh.tasks --partitions "$$RUNMESH_KAFKA_PARTITIONS" --replicas 1 -X brokers=redpanda:9092
+        fi
+    depends_on: {redpanda: {condition: service_healthy}}
+
   redis:
     image: redis:7.4-alpine
     command: ["redis-server", "--appendonly", "yes"]
@@ -72,8 +88,9 @@ services:
     env_file: [deploy/docker/local.env]
     depends_on:
       migrate: {condition: service_completed_successfully}
-      redpanda: {condition: service_healthy}
+      redpanda-init: {condition: service_completed_successfully}
       redis: {condition: service_healthy}
+    deploy: {replicas: 2}
     restart: unless-stopped
 
   worker-python:
@@ -83,7 +100,8 @@ services:
       RUNMESH_HTTP_ENDPOINT: control-plane:8080
       RUNMESH_INTERNAL_TOKEN: rm_00000000-0000-0000-0000-000000000002_local-development-worker-key
       RUNMESH_KAFKA_BROKERS: redpanda:9092
-    depends_on: {control-plane: {condition: service_started}, redpanda: {condition: service_healthy}}
+      RUNMESH_KAFKA_GROUP_ID: runmesh-workers
+    depends_on: {control-plane: {condition: service_started}, redpanda-init: {condition: service_completed_successfully}}
     restart: unless-stopped
 
   worker-go:
@@ -92,14 +110,15 @@ services:
       RUNMESH_ENDPOINT: control-plane:7001
       RUNMESH_INTERNAL_TOKEN: rm_00000000-0000-0000-0000-000000000002_local-development-worker-key
       RUNMESH_KAFKA_BROKERS: redpanda:9092
-    depends_on: {control-plane: {condition: service_started}, redpanda: {condition: service_healthy}}
+      RUNMESH_KAFKA_GROUP_ID: runmesh-workers
+    depends_on: {control-plane: {condition: service_started}, redpanda-init: {condition: service_completed_successfully}}
     restart: unless-stopped
 
   web:
     build:
       context: .
       dockerfile: web/Dockerfile
-      args: {VITE_DEV_AUTH: "false", VITE_OIDC_AUTHORITY: "http://localhost:8180/realms/runmesh", VITE_OIDC_CLIENT_ID: "runmesh-web"}
+      args: {WEB_DEVELOPMENT_MODE: "false", VITE_OIDC_AUTHORITY: "http://localhost:8180/realms/runmesh", VITE_OIDC_CLIENT_ID: "runmesh-web"}
     ports: ["3000:3000"]
     depends_on: [control-plane]
     restart: unless-stopped

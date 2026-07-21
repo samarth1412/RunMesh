@@ -8,8 +8,8 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
-	"github.com/runmesh/runmesh/internal/tracecontext"
-	"github.com/runmesh/runmesh/internal/workflow"
+	"github.com/samarth1412/RunMesh/internal/tracecontext"
+	"github.com/samarth1412/RunMesh/internal/workflow"
 )
 
 type Failure struct {
@@ -47,9 +47,6 @@ func (s *Store) LeaseTask(ctx context.Context, taskID, workerID string, lease ti
 	if err != nil {
 		return t, err
 	}
-	if _, err = tx.Exec(ctx, `UPDATE task_attempts SET executing_at=now() WHERE task_run_id=$1 AND attempt_number=$2 AND executing_at IS NULL`, t.ID, t.AttemptCount); err != nil {
-		return t, err
-	}
 	return t, tx.Commit(ctx)
 }
 
@@ -76,6 +73,9 @@ func (s *Store) StartTask(ctx context.Context, taskID, workerID string) (workflo
 		return t, ErrLeaseLost
 	}
 	if err != nil {
+		return t, err
+	}
+	if _, err = tx.Exec(ctx, `UPDATE task_attempts SET executing_at=now() WHERE task_run_id=$1 AND attempt_number=$2 AND executing_at IS NULL`, t.ID, t.AttemptCount); err != nil {
 		return t, err
 	}
 	return t, tx.Commit(ctx)
@@ -262,6 +262,24 @@ func (s *Store) TaskBelongsToTenant(ctx context.Context, taskID, tenantID string
 	}
 	if !exists {
 		return ErrNotFound
+	}
+	return nil
+}
+
+func (s *Store) ActiveTaskLeaseBelongsToWorker(ctx context.Context, taskID, tenantID, workerID string) error {
+	var taskTenantID string
+	var active bool
+	err := s.Pool.QueryRow(ctx, `SELECT r.tenant_id::text,
+		(t.status IN ('LEASED','RUNNING') AND t.lease_owner=$2 AND t.lease_expires_at>now() AND r.status='RUNNING')
+		FROM task_runs t JOIN workflow_runs r ON r.id=t.workflow_run_id WHERE t.id=$1`, taskID, workerID).Scan(&taskTenantID, &active)
+	if errors.Is(err, pgx.ErrNoRows) || (err == nil && taskTenantID != tenantID) {
+		return ErrNotFound
+	}
+	if err != nil {
+		return err
+	}
+	if !active {
+		return ErrLeaseLost
 	}
 	return nil
 }

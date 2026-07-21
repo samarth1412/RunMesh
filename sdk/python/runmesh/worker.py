@@ -234,6 +234,13 @@ class Worker:
         dispatch = json.loads(message.value)
         task_id = dispatch["task_run_id"]
         trace_parent = _header(message, "traceparent")
+        handler = self._handlers.get(dispatch["handler"])
+        if handler is None:
+            # Heterogeneous capability pools use distinct consumer groups. This
+            # group acknowledges handlers it does not own without claiming the
+            # database task; a capable group can acquire the durable lease.
+            await consumer.commit()
+            return
         try:
             task = await self._post(
                 session, f"/internal/v1/tasks/{task_id}/lease", {}, trace_parent=trace_parent
@@ -256,9 +263,6 @@ class Worker:
         )
         heartbeat = asyncio.create_task(self._heartbeat(session, context))
         try:
-            handler = self._handlers.get(task["handler"])
-            if handler is None:
-                raise RetryableError(f"worker does not provide handler {task['handler']!r}")
             task_input = task["input"]
             if task.get("input_artifact_uri"):
                 task_input = json.loads(

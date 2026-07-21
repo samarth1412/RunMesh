@@ -2,6 +2,7 @@ import http from 'k6/http';
 import { check } from 'k6';
 
 export const options = {
+  summaryTrendStats: ['avg', 'min', 'med', 'p(90)', 'p(95)', 'p(99)', 'max'],
   scenarios: {
     api_reads: {
       executor: 'constant-arrival-rate',
@@ -17,9 +18,10 @@ export const options = {
 };
 
 const api = __ENV.RUNMESH_API || 'http://localhost:8080';
+const path = __ENV.RUNMESH_READ_PATH || '/v1/workflows';
 const token = __ENV.RUNMESH_TOKEN;
 
 export default function () {
-  const response = http.get(`${api}/v1/workflows`, { headers: { Authorization: `Bearer ${token}` } });
+  const response = http.get(`${api}${path}`, { headers: { Authorization: `Bearer ${token}` } });
   check(response, { 'authenticated request succeeded': value => value.status === 200 });
 }

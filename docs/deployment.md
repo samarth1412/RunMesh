@@ -34,10 +34,10 @@ helm upgrade --install runmesh deploy/helm/runmesh \
   --set config.corsAllowlist=https://runmesh.example.com \
   --set config.artifactRegion=us-east-1 \
   --set config.artifactBucket=runmesh-production-artifacts \
-  --set images.controlPlane.tag=1.0.0 \
-  --set images.scheduler.tag=1.0.0 \
-  --set images.web.tag=1.0.0 \
-  --set images.workerGo.tag=1.0.0
+  --set images.controlPlane.tag=0.1.0 \
+  --set images.scheduler.tag=0.1.0 \
+  --set images.web.tag=0.1.0 \
+  --set images.workerGo.tag=0.1.0
 ```
 
 The dashboard reads OIDC and API configuration from a ConfigMap-mounted `config.js`, so the same immutable web image can be promoted between environments. Credentials are rendered only into a Secret, never into the ConfigMap. Probes, resources, HPAs, disruption budgets, restricted security contexts, rolling strategies, and default-deny NetworkPolicies are enabled by default.
@@ -65,7 +65,7 @@ Annotate the chart service account with the `artifact_role_arn` output. Install 
 
 ## Release and upgrade validation
 
-Tags matching `v*` publish control-plane, scheduler, Go worker, Python worker, and web images to GHCR. Every image receives semantic-version and commit-SHA tags, a multi-architecture manifest, SBOM, provenance attestation, and a Trivy scan.
+Tags matching `v*` are configured to publish control-plane, scheduler, Go worker, Python worker, and web images to GHCR. Every image receives semantic-version and commit-SHA tags, a multi-architecture manifest, SBOM, provenance attestation, and a Trivy scan. No `v0.1.0` tag or image is published as part of repository validation; a maintainer must explicitly create the tag after reviewing the release checklist.
 
 CI lints every workflow with actionlint, validates Terraform and its mock plan, lints/templates the Helm chart, checks manifests with kubeconform, and runs a kind rolling-upgrade scenario while a workflow is active. Run that scenario locally with:
 

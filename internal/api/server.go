@@ -18,13 +18,13 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"github.com/robfig/cron/v3"
-	"github.com/runmesh/runmesh/internal/artifact"
-	"github.com/runmesh/runmesh/internal/auth"
-	"github.com/runmesh/runmesh/internal/live"
-	"github.com/runmesh/runmesh/internal/storage"
-	"github.com/runmesh/runmesh/internal/telemetry"
-	"github.com/runmesh/runmesh/internal/workflow"
-	openapispec "github.com/runmesh/runmesh/openapi"
+	"github.com/samarth1412/RunMesh/internal/artifact"
+	"github.com/samarth1412/RunMesh/internal/auth"
+	"github.com/samarth1412/RunMesh/internal/live"
+	"github.com/samarth1412/RunMesh/internal/storage"
+	"github.com/samarth1412/RunMesh/internal/telemetry"
+	"github.com/samarth1412/RunMesh/internal/workflow"
+	openapispec "github.com/samarth1412/RunMesh/openapi"
 )
 
 const maxBodyBytes = 1 << 20
@@ -230,6 +230,7 @@ func (s *Server) createArtifactUpload(w http.ResponseWriter, r *http.Request) {
 		SizeBytes      int64   `json:"size_bytes"`
 		ChecksumSHA256 string  `json:"checksum_sha256,omitempty"`
 		TaskRunID      *string `json:"task_run_id,omitempty"`
+		WorkerID       string  `json:"worker_id,omitempty"`
 	}
 	if !decode(w, r, &req) {
 		return
@@ -238,6 +239,13 @@ func (s *Server) createArtifactUpload(w http.ResponseWriter, r *http.Request) {
 	var upload artifact.Upload
 	var err error
 	if strings.HasPrefix(r.URL.Path, "/internal/") {
+		if req.TaskRunID == nil || req.WorkerID == "" {
+			writeError(w, http.StatusBadRequest, "task_run_id and worker_id are required")
+			return
+		}
+		if !s.authorizeActiveTask(w, r, *req.TaskRunID, req.WorkerID) {
+			return
+		}
 		upload, err = s.Artifacts.CreateInternalUpload(r.Context(), p.TenantID, p.UserID, req.Kind, req.ContentType, req.SizeBytes, req.ChecksumSHA256, req.TaskRunID)
 	} else {
 		upload, err = s.Artifacts.CreateUpload(r.Context(), p.TenantID, p.UserID, req.Kind, req.ContentType, req.SizeBytes, req.ChecksumSHA256, req.TaskRunID)
@@ -259,6 +267,24 @@ func (s *Server) completeArtifactUpload(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	p := auth.PrincipalFrom(r.Context())
+	if strings.HasPrefix(r.URL.Path, "/internal/") {
+		var req workerRequest
+		if !decode(w, r, &req) {
+			return
+		}
+		if req.WorkerID == "" || req.TaskRunID == "" {
+			writeError(w, http.StatusBadRequest, "task_run_id and worker_id are required")
+			return
+		}
+		if !s.authorizeActiveTask(w, r, req.TaskRunID, req.WorkerID) {
+			return
+		}
+		pending, pendingErr := s.Store.GetArtifact(r.Context(), p.TenantID, r.PathValue("id"))
+		if pendingErr != nil || pending.TaskRunID == nil || *pending.TaskRunID != req.TaskRunID {
+			writeError(w, http.StatusNotFound, "artifact not found for active task")
+			return
+		}
+	}
 	a, err := s.Artifacts.Complete(r.Context(), p.TenantID, r.PathValue("id"))
 	if handleErr(w, err) {
 		return
@@ -275,6 +301,15 @@ func (s *Server) downloadArtifact(w http.ResponseWriter, r *http.Request) {
 	var download artifact.Download
 	var err error
 	if strings.HasPrefix(r.URL.Path, "/internal/") {
+		taskRunID := r.URL.Query().Get("task_run_id")
+		workerID := r.URL.Query().Get("worker_id")
+		if taskRunID == "" || workerID == "" {
+			writeError(w, http.StatusBadRequest, "task_run_id and worker_id are required")
+			return
+		}
+		if !s.authorizeActiveTask(w, r, taskRunID, workerID) {
+			return
+		}
 		download, err = s.Artifacts.DownloadInternal(r.Context(), p.TenantID, r.PathValue("id"))
 	} else {
 		download, err = s.Artifacts.Download(r.Context(), p.TenantID, r.PathValue("id"))
@@ -305,6 +340,19 @@ func (s *Server) getRun(w http.ResponseWriter, r *http.Request) {
 			if run.Tasks[index].LogArtifactURI != nil {
 				if signed, signErr := s.Artifacts.Download(r.Context(), tenantID, *run.Tasks[index].LogArtifactURI); signErr == nil {
 					run.Tasks[index].LogArtifactDownloadURL = signed.URL
+				}
+			}
+			for attemptIndex := range run.Tasks[index].Attempts {
+				attempt := &run.Tasks[index].Attempts[attemptIndex]
+				if attempt.ArtifactURI != "" {
+					if signed, signErr := s.Artifacts.Download(r.Context(), tenantID, attempt.ArtifactURI); signErr == nil {
+						attempt.ArtifactDownloadURL = signed.URL
+					}
+				}
+				if attempt.LogArtifactURI != "" {
+					if signed, signErr := s.Artifacts.Download(r.Context(), tenantID, attempt.LogArtifactURI); signErr == nil {
+						attempt.LogArtifactDownloadURL = signed.URL
+					}
 				}
 			}
 		}
@@ -457,12 +505,17 @@ func (s *Server) revokeAPIKey(w http.ResponseWriter, r *http.Request) {
 }
 
 type workerRequest struct {
-	WorkerID string `json:"worker_id"`
+	WorkerID  string `json:"worker_id"`
+	TaskRunID string `json:"task_run_id,omitempty"`
 }
 
 func (s *Server) lease(w http.ResponseWriter, r *http.Request) {
 	var req workerRequest
-	if !decode(w, r, &req) || req.WorkerID == "" {
+	if !decode(w, r, &req) {
+		return
+	}
+	if req.WorkerID == "" {
+		writeError(w, http.StatusBadRequest, "worker_id is required")
 		return
 	}
 	if !s.authorizeTask(w, r) {
@@ -479,6 +532,10 @@ func (s *Server) start(w http.ResponseWriter, r *http.Request) {
 	if !decode(w, r, &req) {
 		return
 	}
+	if req.WorkerID == "" {
+		writeError(w, http.StatusBadRequest, "worker_id is required")
+		return
+	}
 	if !s.authorizeTask(w, r) {
 		return
 	}
@@ -491,6 +548,10 @@ func (s *Server) start(w http.ResponseWriter, r *http.Request) {
 func (s *Server) heartbeat(w http.ResponseWriter, r *http.Request) {
 	var req workerRequest
 	if !decode(w, r, &req) {
+		return
+	}
+	if req.WorkerID == "" {
+		writeError(w, http.StatusBadRequest, "worker_id is required")
 		return
 	}
 	if !s.authorizeTask(w, r) {
@@ -511,8 +572,24 @@ func (s *Server) complete(w http.ResponseWriter, r *http.Request) {
 	if !decode(w, r, &req) {
 		return
 	}
+	if req.WorkerID == "" {
+		writeError(w, http.StatusBadRequest, "worker_id is required")
+		return
+	}
 	if !s.authorizeTask(w, r) {
 		return
+	}
+	if req.OutputArtifactURI != "" {
+		if s.Artifacts == nil {
+			writeError(w, http.StatusServiceUnavailable, "artifact storage is not configured")
+			return
+		}
+		principal := auth.PrincipalFrom(r.Context())
+		a, artifactErr := s.Store.GetArtifactByURI(r.Context(), principal.TenantID, req.OutputArtifactURI)
+		if artifactErr != nil || a.Status != "READY" || a.Kind != "output" || a.TaskRunID == nil || *a.TaskRunID != r.PathValue("id") {
+			writeError(w, http.StatusForbidden, "invalid output artifact")
+			return
+		}
 	}
 	t, err := s.Store.CompleteTask(r.Context(), r.PathValue("id"), req.WorkerID, req.Output, req.OutputArtifactURI)
 	if handleErr(w, err) {
@@ -526,6 +603,10 @@ func (s *Server) fail(w http.ResponseWriter, r *http.Request) {
 		storage.Failure
 	}
 	if !decode(w, r, &req) {
+		return
+	}
+	if req.WorkerID == "" {
+		writeError(w, http.StatusBadRequest, "worker_id is required")
 		return
 	}
 	if !s.authorizeTask(w, r) {
@@ -555,6 +636,14 @@ func (s *Server) workerHeartbeat(w http.ResponseWriter, r *http.Request) {
 func (s *Server) authorizeTask(w http.ResponseWriter, r *http.Request) bool {
 	err := s.Store.TaskBelongsToTenant(r.Context(), r.PathValue("id"), auth.PrincipalFrom(r.Context()).TenantID)
 	if handleErr(w, err) {
+		return false
+	}
+	return true
+}
+
+func (s *Server) authorizeActiveTask(w http.ResponseWriter, r *http.Request, taskID, workerID string) bool {
+	p := auth.PrincipalFrom(r.Context())
+	if handleErr(w, s.Store.ActiveTaskLeaseBelongsToWorker(r.Context(), taskID, p.TenantID, workerID)) {
 		return false
 	}
 	return true
