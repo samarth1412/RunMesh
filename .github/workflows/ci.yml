@@ -17,7 +17,7 @@ jobs:
       - run: go test -coverprofile=workflow-coverage.out ./internal/workflow && scripts/check-go-coverage.sh workflow-coverage.out 70
       - run: go test -coverprofile=auth-coverage.out ./internal/auth && scripts/check-go-coverage.sh auth-coverage.out 40
       - run: go test -coverprofile=live-coverage.out ./internal/live && scripts/check-go-coverage.sh live-coverage.out 70
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with: {name: go-coverage, path: "*-coverage.out"}
   python:
     runs-on: ubuntu-latest
@@ -28,7 +28,7 @@ jobs:
       - run: pip install -e 'sdk/python[dev]'
       - run: ruff check sdk/python examples
       - run: cd sdk/python && mypy runmesh && pytest --junitxml=../../pytest.xml
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with: {name: python-coverage, path: sdk/python/coverage.xml}
   web:
     runs-on: ubuntu-latest
@@ -42,7 +42,7 @@ jobs:
       - run: npm run build
       - run: npm run test:coverage
       - run: npm audit --audit-level=high
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with: {name: web-coverage, path: web/coverage/coverage-summary.json}
   protobuf:
     runs-on: ubuntu-latest
@@ -130,7 +130,7 @@ jobs:
       - if: always()
         run: docker compose logs --no-color > compose.log && docker compose down -v
       - if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: compose-e2e-results
           path: |
