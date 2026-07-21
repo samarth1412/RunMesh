@@ -35,8 +35,8 @@ services:
     environment: {RUNMESH_KAFKA_PARTITIONS: "6"}
     command:
       - |
-        if summary="$$(rpk topic describe runmesh.tasks --print-summary -X brokers=redpanda:9092 2>/dev/null)"; then
-          current="$$(printf '%s\n' "$$summary" | awk '$$1 == "PARTITIONS" {print $$2}')"
+        current="$$(rpk topic list -X brokers=redpanda:9092 | awk '$$1 == "runmesh.tasks" {print $$2}')"
+        if [ -n "$$current" ]; then
           if [ "$$current" -lt "$$RUNMESH_KAFKA_PARTITIONS" ]; then
             rpk topic add-partitions runmesh.tasks --num "$$((RUNMESH_KAFKA_PARTITIONS-current))" -X brokers=redpanda:9092
           fi
