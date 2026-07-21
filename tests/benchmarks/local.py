@@ -103,9 +103,9 @@ def active_workflows(api: str, token: str, count: int, prefix: str) -> dict:
 
 
 def prepare_tasks(api: str, token: str, tasks: int, prefix: str) -> dict:
-    per_run = 500
+    per_run = 100
     if tasks % per_run:
-        raise ValueError("task total must be divisible by 500")
+        raise ValueError("task total must be divisible by 100")
     workflow_id = create_workflow(api, token, f"{prefix}-definition", per_run, "examples.slow")
     runs = []
     started = time.perf_counter()

@@ -29,8 +29,10 @@ done
 benchmark_token=$(python3 tests/benchmarks/local.py token)
 
 docker compose exec -T redpanda rpk topic describe runmesh.tasks --format json > "$result_dir/kafka-topology-before.json"
+read_workflow=$(python3 tests/benchmarks/local.py definition --prefix "validation-read-$run_suffix")
 docker run --rm --add-host host.docker.internal:host-gateway \
   -e RUNMESH_API=http://host.docker.internal:8080 \
+  -e RUNMESH_READ_PATH="/v1/workflows/$read_workflow" \
   -e RUNMESH_TOKEN="$benchmark_token" -e RUNMESH_RATE=100 -e RUNMESH_DURATION=30s \
   -v "$PWD/tests/load":/scripts:ro -v "$PWD/$result_dir":/results \
   grafana/k6:0.57.0 run --summary-export=/results/api-read.json /scripts/api-read.js
@@ -114,6 +116,7 @@ docker compose exec -T postgres psql -U runmesh -d runmesh -Atc \
 
 python3 tests/benchmarks/local.py duplicate --prefix "$duplicate_prefix" > "$result_dir/duplicate-submission.json"
 docker run --rm -v "$PWD":/src -w /src -v /var/run/docker.sock:/var/run/docker.sock \
+  -v runmesh-go-mod:/go/pkg/mod -v runmesh-go-build:/root/.cache/go-build \
   -e TESTCONTAINERS_HOST_OVERRIDE=host.docker.internal golang:1.25 \
   /usr/local/go/bin/go test -tags=integration -count=1 -run TestDuplicateDispatchIsLeasedOnce -json ./tests/integration \
   > "$result_dir/duplicate-delivery-go-test.json"
