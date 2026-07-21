@@ -1,0 +1,10 @@
+{
+  "first_run_id": "063ca9ad-33ea-4ef0-99df-f9e4e6ddaebd",
+  "first_status": 201,
+  "original_input_preserved": true,
+  "passed": true,
+  "same_run": true,
+  "scenario": "duplicate_submission",
+  "second_run_id": "063ca9ad-33ea-4ef0-99df-f9e4e6ddaebd",
+  "second_status": 200
+}

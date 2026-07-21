@@ -16,9 +16,9 @@ RunMesh stores versioned DAGs, schedules dependency-aware tasks, and delivers wo
 
 It ships as a complete local platform: Go control plane and scheduler, Go and Python workers, a React operations dashboard, OIDC authentication, tenant-scoped API keys, S3-compatible artifacts, live updates, metrics, logs, traces, Helm charts, and validated AWS Terraform.
 
-Latest local evidence on an Apple M4 / 16 GiB machine: **412.482 scheduler
-dispatches/second across 10,000 tasks**, **100.023 authenticated reads/second
-at 3.228 ms p95**, and **10,000/10,000 tasks completed with zero permanent
+Latest local evidence on an Apple M4 / 16 GiB machine: **407.403 scheduler
+dispatches/second across 10,000 tasks**, **100.0 authenticated reads/second
+at 3.307 ms p95**, and **10,000/10,000 tasks completed with zero permanent
 loss after all 20 workers were terminated**. These are reproducible local
 Docker results, not production-capacity claims.
 
@@ -200,14 +200,14 @@ The repository includes unit, race, integration, browser, security, chaos, deplo
 
 | Scenario | Recorded result |
 | --- | ---: |
-| Authenticated API reads | 100.023 req/s; 1.416/3.228/5.745 ms p50/p95/p99; 0 failures |
-| Workflow submissions | 50.026 req/s; 1.560/3.236/13.553 ms p50/p95/p99; 0 failures |
-| Simultaneously active workflows | 1,000 created; 0 failures; 30.747 tasks/s drain |
-| Scheduler dispatch | 412.482 tasks/s across 10,000 tasks |
-| Worker termination and recovery | 20 workers terminated; 10,000/10,000 succeeded; 6 recovered attempts; 0 lost |
+| Authenticated API reads | 100.0 req/s; 1.701/3.307/4.657 ms p50/p95/p99; 0 failures |
+| Workflow submissions | 50.028 req/s; 1.587/7.012/220.024 ms p50/p95/p99; 0 failures |
+| Simultaneously active workflows | 1,000 created; 0 failures; 57.608 tasks/s drain |
+| Scheduler dispatch | 407.403 tasks/s across 10,000 tasks |
+| Worker termination and recovery | 20 workers terminated; 10,000/10,000 succeeded; 7 recovered attempts; 0 lost |
 | Duplicate submission and delivery | Passed |
 
-These numbers are transparent local evidence, not a universal capacity claim. Hardware details, commands, image digests, source SHA, and raw machine-readable output are committed in the [2026-07-21T002100Z benchmark results](tests/benchmarks/results/2026-07-21T002100Z/README.md). The complete [local validation ledger](docs/validation.md) separates executed checks from remote or cloud work that remains unverified.
+These numbers are transparent local evidence, not a universal capacity claim. Hardware details, commands, image digests, source SHA, and raw machine-readable output are committed in the [2026-07-21T003600Z benchmark results](tests/benchmarks/results/2026-07-21T003600Z/README.md), the canonical run against the current `HEAD`. The complete [local validation ledger](docs/validation.md) separates executed checks from remote or cloud work that remains unverified.
 
 ## Development
 
@@ -247,7 +247,7 @@ Coverage gates intentionally target risk rather than 100%: the workflow state ma
 - Workers in the same Kafka consumer group must expose the same handler set; heterogeneous capability pools require separate group IDs.
 - The outbox removes broker I/O from database transactions, but PostgreSQL claim and acknowledgement writes still bound dispatch throughput.
 - The recorded 10,000-task crash run recovered all interrupted leases, but the
-  recovered-attempt delay was 125.145 seconds p50 under backlog; prioritizing
+  recovered-attempt delay was 132.797 seconds p50 under backlog; prioritizing
   expired leases is future work.
 - At-least-once execution cannot make arbitrary handler side effects exactly-once. Handlers must use the stable task idempotency key.
 - Redis Pub/Sub notifications are best-effort; the dashboard re-reads durable state and falls back to polling.

@@ -18,6 +18,8 @@ All notable changes are documented here. This project follows Semantic Versionin
 - Transactional outbox publication now claims work in short PostgreSQL transactions and publishes outside row locks.
 - Workflow-run Kafka keys preserve ordering across multiple partitions and concurrent publishers.
 - Worker operations verify tenant ownership, worker identity, active state, and unexpired leases.
+- Fixed Kafka/Redpanda topic initialization on a completely fresh stack, where `rpk topic describe` could report success before the topic actually existed.
+- Fixed heterogeneous Go/Python worker capability routing on a shared consumer group.
 
 ### Known limitations
 
