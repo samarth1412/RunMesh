@@ -2,4 +2,8 @@ version: v2
 modules:
   - path: proto
 lint: {use: [STANDARD]}
-breaking: {use: [FILE]}
+# FILE_SAME_GO_PACKAGE is excepted for the one-time go_package rename to the
+# canonical module path; there is no released version or external consumer yet.
+breaking:
+  use: [FILE]
+  except: [FILE_SAME_GO_PACKAGE]
