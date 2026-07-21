@@ -16,6 +16,7 @@ duplicate_prefix="validation-duplicate-$run_suffix"
 
 cp "$0" "$result_dir/commands.sh"
 docker compose up -d --build
+docker compose up -d --scale scheduler=2 --scale worker-go=1 --scale worker-python=1 scheduler worker-go worker-python
 for endpoint in \
   http://localhost:8180/realms/runmesh/.well-known/openid-configuration \
   http://localhost:8080/health/ready; do
