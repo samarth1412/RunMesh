@@ -7,20 +7,30 @@ universal capacity claim.
 
 ## Latest recorded run
 
-The [2026-07-20 local run](../tests/benchmarks/results/2026-07-20/README.md)
+The [2026-07-21T002100Z local run](../tests/benchmarks/results/2026-07-21T002100Z/README.md)
 used an Apple M4 MacBook Air with 16 GiB RAM and Docker Desktop 4.82.0.
 
 | Scenario | Result |
 | --- | ---: |
-| Authenticated API load | 100.017 requests/second, 4.316 ms p95, 0 failures |
-| Simultaneously active workflows | 1,000 |
-| Scheduler dispatch | 196.078 tasks/second across 10,000 tasks |
-| Worker termination and lease recovery | 10,000/10,000 succeeded, 0 lost |
+| Authenticated API reads | 100.023 requests/s; 1.416/3.228/5.745 ms p50/p95/p99; 0 failures |
+| Workflow submissions | 50.026 requests/s; 1.560/3.236/13.553 ms p50/p95/p99; 0 failures |
+| Simultaneously active workflows | 1,000 created in 20.200 seconds; 0 failures |
+| Queued end-to-end completion | 1,000 tasks at 30.747 tasks/s |
+| Scheduler dispatch | 412.482 tasks/s across 10,000 tasks |
+| Worker termination and lease recovery | 20 workers terminated; 10,000/10,000 succeeded; 6 recovered; 0 lost |
 | Duplicate submission and delivery | Passed |
 
-The local Redpanda topology used one partition, so worker consumption was serial.
-The dispatch result met the target; the worker-termination run is reported as
-correctness and recovery evidence, not as a throughput claim.
+The run used two scheduler replicas, a six-partition local Redpanda topic, and
+12 workers for the queued completion phase. The termination scenario killed
+all 20 Go-worker containers while six tasks were actively running. Its complete
+drain took 202.867 seconds. The six lease-expiration-to-next-attempt samples
+were 125.145/167.824/168.519 seconds p50/p95/p99; the backlog makes this a
+correctness result and exposes a recovery-latency optimization opportunity.
+
+All 15 blocking verification checks passed. New records appeared on every
+Kafka partition, duplicate submission returned the same run while preserving
+the original input, and the duplicate-delivery integration test permitted only
+one successful lease.
 
 ## Reproduce locally
 

@@ -1,0 +1,6 @@
+{
+  "scenario": "scheduler_dispatch",
+  "tasks": 10000,
+  "elapsed_seconds": 24.152,
+  "dispatches_per_second": 414.042
+}

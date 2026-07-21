@@ -1,0 +1,1 @@
+{"scenario" : "worker_termination_and_lease_recovery", "tasks" : 10000, "succeeded" : 10000, "other" : 0, "attempts" : 10007, "recovered_tasks" : 7, "duplicate_attempts" : 7, "recovery_seconds" : 210.388}

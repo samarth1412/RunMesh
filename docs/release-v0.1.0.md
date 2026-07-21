@@ -21,3 +21,11 @@ This draft prepares the first RunMesh release. It is not evidence that a tag, Gi
 ## Known limitations
 
 See `CHANGELOG.md` and the README limitations section. In particular, AWS has not been applied and benchmark results are local evidence only.
+
+## Suggested GitHub metadata
+
+- Description: `Multi-tenant workflow orchestration with durable DAG execution, Kafka delivery, and lease-based failure recovery.`
+- Topics: `distributed-systems`, `workflow-engine`, `golang`, `kafka`,
+  `postgresql`, `kubernetes`, `observability`, `react`, `python`
+- Social preview: use the real operations-overview screenshot in `docs/demo`
+  with a short RunMesh title treatment; do not imply hosted production usage.

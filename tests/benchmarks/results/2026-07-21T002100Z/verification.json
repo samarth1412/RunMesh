@@ -1,0 +1,21 @@
+{
+  "checks": {
+    "active_workflows": true,
+    "api_requests": true,
+    "api_zero_failures": true,
+    "duplicate_delivery": true,
+    "duplicate_submission": true,
+    "end_to_end_zero_task_loss": true,
+    "lease_recovered": true,
+    "multi_partition_delivery": true,
+    "multiple_tasks_in_flight": true,
+    "six_kafka_partitions": true,
+    "submission_requests": true,
+    "submission_zero_failures": true,
+    "ten_thousand_tasks": true,
+    "worker_pool_terminated": true,
+    "zero_task_loss": true
+  },
+  "observed_partitions_with_new_records": 6,
+  "passed": true
+}
